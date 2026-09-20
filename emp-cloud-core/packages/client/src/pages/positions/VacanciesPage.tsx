@@ -1,0 +1,184 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
+import { Briefcase, AlertTriangle, MapPin, CheckCircle2 } from "lucide-react";
+import api from "@/api/client";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { showToast } from "@/components/ui/Toast";
+
+interface PendingConfirm {
+  id: number;
+  title: string;
+}
+
+export default function VacanciesPage() {
+  const { t } = useTranslation();
+  const tx = (k: string, opts?: Record<string, unknown>) =>
+    t(`positions.vacancies.${k}`, opts ?? {});
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
+  const { data, isLoading } = useQuery({
+    queryKey: ["position-vacancies"],
+    queryFn: () => api.get("/positions/vacancies").then((r) => r.data.data),
+  });
+
+  // #1468 — "Mark as Filled" button. The underlying backend already supports
+  // status transitions via PUT /positions/:id with { status: "filled" }, so we
+  // reuse that endpoint rather than introducing a new one. HR-only (same RBAC
+  // as the vacancies list itself, which already requires HR).
+  const markFilledMutation = useMutation({
+    mutationFn: (positionId: number) =>
+      api.put(`/positions/${positionId}`, { status: "filled" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["position-vacancies"] });
+      queryClient.invalidateQueries({ queryKey: ["positions"] });
+      queryClient.invalidateQueries({ queryKey: ["position-dashboard"] });
+      showToast(
+        "success",
+        pending
+          ? (tx("markSuccess", { title: pending.title }) as string)
+          : (tx("markSuccessGeneric") as string),
+      );
+      setPending(null);
+    },
+    onError: (err: any) => {
+      showToast("error", err?.response?.data?.error?.message || (tx("markError") as string));
+      setPending(null);
+    },
+  });
+
+  const vacancies = data || [];
+
+  // Group by department
+  const grouped: Record<string, any[]> = {};
+  for (const v of vacancies) {
+    const dept = v.department_name || (tx("unassigned") as string);
+    if (!grouped[dept]) grouped[dept] = [];
+    grouped[dept].push(v);
+  }
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">{tx("title")}</h1>
+          <p className="text-[13px] text-muted-foreground mt-0.5">
+            {tx("subtitle")}
+            {vacancies.length > 0 && (
+              <span className="ml-2 text-brand-600 dark:text-brand-400 font-medium">
+                {tx("positionsWithOpenings", { count: vacancies.length })}
+              </span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-muted-foreground">{tx("loading")}</div>
+        </div>
+      ) : vacancies.length === 0 ? (
+        <div className="bg-card rounded-lg border border-border p-12 text-center">
+          <Briefcase className="h-12 w-12 text-muted-foreground/50 mx-auto mb-3" />
+          <h3 className="text-base font-medium text-foreground">{tx("noVacanciesTitle")}</h3>
+          <p className="text-[13px] text-muted-foreground mt-1">{tx("noVacanciesSubtitle")}</p>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {Object.entries(grouped).map(([dept, positions]) => (
+            <div key={dept}>
+              <h2 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">{dept}</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {positions.map((pos: any) => (
+                  <div
+                    key={pos.id}
+                    className="bg-card rounded-lg border border-border p-4 hover:border-brand-400 transition-colors duration-150 group"
+                  >
+                    <Link to={`/positions/${pos.id}`} className="block">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground group-hover:text-brand-600">
+                            {pos.title}
+                          </h3>
+                          {pos.code ? (
+                            <span className="text-xs font-mono text-muted-foreground">{pos.code}</span>
+                          ) : null}
+                        </div>
+                        {pos.is_critical && (
+                          <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground mb-3">
+                        <span className="capitalize">{(pos.employment_type || "").replace("_", " ")}</span>
+                        {pos.location_name && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3" />{pos.location_name}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-400">{pos.open_count}</span>
+                          <span className="text-[11px] text-muted-foreground ml-1">
+                            {tx("openings", { count: pos.open_count })}
+                          </span>
+                        </div>
+                        <span className="text-[11px] tabular-nums text-muted-foreground">
+                          {tx("filledRatio", { filled: pos.headcount_filled, budget: pos.headcount_budget })}
+                        </span>
+                      </div>
+
+                      {/* #1550 — render guard via ternary, not `0 && ...`,
+                          so when both salaries are 0/null React doesn't print
+                          a stray "0" instead of skipping the block. */}
+                      {pos.min_salary || pos.max_salary ? (
+                        <div className="mt-2 text-[11px] tabular-nums text-muted-foreground">
+                          {pos.currency} {pos.min_salary ? (pos.min_salary / 100).toLocaleString() : "0"} - {pos.max_salary ? (pos.max_salary / 100).toLocaleString() : "0"}
+                        </div>
+                      ) : null}
+                    </Link>
+
+                    {/* #1468 — Filled button: explicitly mark this position's status
+                        as filled. Useful when a role is staffed through external
+                        means (contractor, fill-by-merge, etc.) and HR wants to
+                        stop showing it as open. Separate from the Link so the
+                        click doesn't navigate. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setPending({ id: pos.id, title: pos.title });
+                      }}
+                      disabled={markFilledMutation.isPending}
+                      className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400 hover:text-green-700 disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {markFilledMutation.isPending && markFilledMutation.variables === pos.id
+                        ? tx("marking")
+                        : tx("mark")}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={pending !== null}
+        title={pending ? (tx("confirmTitle", { title: pending.title }) as string) : ""}
+        description={tx("confirmDescription") as string}
+        confirmText={tx("mark") as string}
+        variant="success"
+        loading={markFilledMutation.isPending}
+        onConfirm={() => pending && markFilledMutation.mutate(pending.id)}
+        onCancel={() => !markFilledMutation.isPending && setPending(null)}
+      />
+    </div>
+  );
+}

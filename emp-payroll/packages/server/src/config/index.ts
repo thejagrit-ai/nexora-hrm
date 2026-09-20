@@ -1,0 +1,131 @@
+import dotenv from "dotenv";
+import path from "path";
+import fs from "fs";
+dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
+
+export const config = {
+  env: process.env.NODE_ENV || "development",
+  port: parseInt(process.env.PORT || "4000"),
+  host: process.env.HOST || "0.0.0.0",
+
+  // Payroll module database (payroll-specific tables only)
+  db: {
+    provider: process.env.DB_PROVIDER || "mysql",
+    host: process.env.DB_HOST || "localhost",
+    port: parseInt(process.env.DB_PORT || "3306"),
+    user: process.env.DB_USER || "root",
+    password: process.env.DB_PASSWORD || "",
+    name: process.env.DB_NAME || "emp_payroll",
+  },
+
+  // EmpCloud master database (users, organizations, auth — shared across modules)
+  empcloudDb: {
+    host: process.env.EMPCLOUD_DB_HOST || process.env.DB_HOST || "localhost",
+    port: parseInt(process.env.EMPCLOUD_DB_PORT || process.env.DB_PORT || "3306"),
+    user: process.env.EMPCLOUD_DB_USER || process.env.DB_USER || "root",
+    password: process.env.EMPCLOUD_DB_PASSWORD || process.env.DB_PASSWORD || "",
+    name: process.env.EMPCLOUD_DB_NAME || "empcloud",
+  },
+
+  // emp-exit database (source of truth for exit dates). Payroll reads
+  // last_working_date from here instead of trusting empcloud.users.date_of_exit,
+  // because the latter is populated by a webhook that has historically
+  // fallen back to "today" when the payload was missing the date — which
+  // produced wrong dates on EmpCloud + over-paid final-month payslips.
+  //
+  // Env naming follows the EMPCLOUD_EXIT_DB_* convention used on the
+  // production backend server (.env at repo root). Host/credentials fall
+  // back to the generic DB_* values for local dev where the exit DB lives
+  // on the same MySQL instance as payroll.
+  empexitDb: {
+    host: process.env.EMPCLOUD_EXIT_DB_HOST || process.env.DB_HOST || "localhost",
+    port: parseInt(process.env.EMPCLOUD_EXIT_DB_PORT || process.env.DB_PORT || "3306"),
+    user: process.env.EMPCLOUD_EXIT_DB_USER || process.env.DB_USER || "root",
+    password: process.env.EMPCLOUD_EXIT_DB_PASSWORD || process.env.DB_PASSWORD || "",
+    name: process.env.EMPCLOUD_EXIT_DB_NAME || "empexit-db",
+    // Set EMPCLOUD_EXIT_DB_ENABLED=false to disable the integration;
+    // payroll then falls back to empcloud.users.date_of_exit (legacy
+    // behavior). Defaults to enabled.
+    enabled: process.env.EMPCLOUD_EXIT_DB_ENABLED !== "false",
+  },
+
+  // MongoDB (when DB_PROVIDER=mongodb)
+  mongo: {
+    uri: process.env.MONGO_URI || "mongodb://localhost:27017/emp_payroll",
+  },
+
+  // Redis (for queues, caching)
+  redis: {
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+    password: process.env.REDIS_PASSWORD || undefined,
+  },
+
+  // JWT
+  jwt: {
+    secret: process.env.JWT_SECRET || "change-this-in-production",
+    accessExpiry: process.env.JWT_ACCESS_EXPIRY || "15m",
+    refreshExpiry: process.env.JWT_REFRESH_EXPIRY || "7d",
+    // RS256 public key from EMP Cloud — used to verify SSO tokens
+    // Reads from file path if EMPCLOUD_PUBLIC_KEY points to a .pem file, otherwise uses raw value
+    empcloudPublicKey: (() => {
+      const val = process.env.EMPCLOUD_PUBLIC_KEY || "";
+      if (val && (val.endsWith(".pem") || val.endsWith(".pub"))) {
+        try {
+          const p1 = path.resolve(process.cwd(), val);
+          if (fs.existsSync(p1)) return fs.readFileSync(p1, "utf-8");
+          const p2 = path.resolve(process.cwd(), "../..", val.replace(/^\.\.\//, ""));
+          if (fs.existsSync(p2)) return fs.readFileSync(p2, "utf-8");
+          return fs.readFileSync(val, "utf-8");
+        } catch {
+          return "";
+        }
+      }
+      return val;
+    })(),
+  },
+
+  // Email (payslip delivery)
+  // Mirrors the EmpCloud HRMS transport selection so the same `.env` works
+  // for both repos. Order: SendGrid → SMTP → no-op.
+  // - SendGrid is preferred when SENDGRID_API_KEY is set.
+  // - On SendGrid send failure we FALL THROUGH to SMTP (not return false),
+  //   matching EmpCloud's behavior.
+  // - Empty SMTP_HOST means "not configured" — we don't silently default to
+  //   smtp.gmail.com and try blank credentials.
+  email: {
+    sendgridApiKey: process.env.SENDGRID_API_KEY || "",
+    // Accept the EmpCloud-style env var names with the legacy payroll names
+    // as fallbacks so existing .env files keep working.
+    fromEmail:
+      process.env.SENDGRID_FROM_EMAIL ||
+      process.env.EMAIL_FROM_EMAIL ||
+      process.env.SMTP_FROM ||
+      "payroll@empcloud.com",
+    fromName: process.env.SENDGRID_FROM_NAME || process.env.EMAIL_FROM_NAME || "EMP Payroll",
+    host: process.env.SMTP_HOST || "",
+    port: parseInt(process.env.SMTP_PORT || "587"),
+    user: process.env.SMTP_USER || "",
+    password: process.env.SMTP_PASS || process.env.SMTP_PASSWORD || "",
+    from: process.env.SMTP_FROM || process.env.SENDGRID_FROM_EMAIL || "payroll@empcloud.com",
+  },
+
+  // CORS
+  cors: {
+    origin: process.env.CORS_ORIGIN || "http://localhost:5173",
+  },
+
+  // India Payroll
+  payroll: {
+    country: process.env.PAYROLL_COUNTRY || "IN",
+    defaultPayFrequency: process.env.PAY_FREQUENCY || "monthly",
+    financialYearStartMonth: 4, // April
+  },
+
+  // Cloud HRMS integration — when enabled, payroll computation fetches
+  // attendance/leave data from EMP Cloud's HRMS APIs instead of local DB.
+  cloudHrms: {
+    enabled: process.env.USE_CLOUD_HRMS === "true",
+    apiUrl: process.env.EMPCLOUD_API_URL || "http://localhost:3000/api/v1",
+  },
+} as const;

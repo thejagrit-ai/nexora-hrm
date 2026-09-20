@@ -1,0 +1,14 @@
+{
+  "name": "nexora-hr",
+  "version": "1.0.0",
+  "description": "NEXORA HR — People. Process. Performance.",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --kill-others \"pnpm --filter @empcloud/server dev\" \"pnpm --filter @emp-recruit/server dev\" \"pnpm --filter @emp-payroll/server dev\" \"pnpm --filter @empcloud/client dev\"",
+    "build": "pnpm --filter @empcloud/client build",
+    "test": "pnpm --filter @empcloud/server test && pnpm --filter @emp-recruit/server test && pnpm --filter @emp-payroll/server test"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+allowBuilds:
+  '@google/genai': true
+  '@scarf/scarf': true
+  core-js: true
+  cpu-features: true
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true
+  ssh2: true

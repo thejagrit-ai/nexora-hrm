@@ -1,0 +1,556 @@
+import { getDB } from "../db/adapters";
+import { AppError } from "../api/middleware/error.middleware";
+import { EmployeeService } from "./employee.service";
+import { findUserByEmpCode, findUserById } from "../db/empcloud";
+import {
+  resolveSalaryComponents,
+  checkResolvedComponents,
+  validateOverrides,
+  SalaryResolverError,
+  type ResolverComponent,
+} from "@emp-payroll/shared";
+
+export class SalaryService {
+  private db = getDB();
+
+  /**
+   * Load a structure's components and resolve them against an annual CTC,
+   * returning monthly amounts ready to persist on `employee_salaries`.
+   * Honors `balance` calc type — exactly one earning may absorb the remainder
+   * of monthly gross after fixed/percentage rows are computed.
+   */
+  private async resolveComponentsForCTC(
+    structureId: string,
+    ctcAnnual: number,
+    overrides?: Record<string, number> | null,
+  ) {
+    const rows = await this.db.findMany<any>("salary_components", {
+      filters: { structure_id: structureId, is_active: true },
+      sort: { field: "sort_order", order: "asc" },
+    });
+    const list = (rows as any).data ?? rows ?? [];
+    const definitions: ResolverComponent[] = list.map((c: any) => ({
+      code: c.code,
+      name: c.name,
+      type: c.type,
+      calculationType: c.calculation_type,
+      value: Number(c.value) || 0,
+      percentageOf: c.percentage_of || undefined,
+    }));
+    try {
+      const hasOverrides = overrides && Object.keys(overrides).length > 0;
+      const base = resolveSalaryComponents(definitions, ctcAnnual);
+      if (hasOverrides) {
+        // Validate the pins against the base breakup + the structure's monthly
+        // gross, then re-resolve with redistribution applied.
+        validateOverrides(base, ctcAnnual / 12, overrides!);
+        return resolveSalaryComponents(definitions, ctcAnnual, { overrides: overrides! });
+      }
+      return base;
+    } catch (err) {
+      if (err instanceof SalaryResolverError) {
+        throw new AppError(400, err.code, err.message);
+      }
+      throw err;
+    }
+  }
+
+  async listStructures(orgId: string) {
+    return this.db.findMany<any>("salary_structures", {
+      filters: { empcloud_org_id: Number(orgId), is_active: true },
+    });
+  }
+
+  async getStructure(id: string, orgId: string) {
+    const structure = await this.db.findOne<any>("salary_structures", {
+      id,
+      empcloud_org_id: Number(orgId),
+    });
+    if (!structure) throw new AppError(404, "NOT_FOUND", "Salary structure not found");
+    return structure;
+  }
+
+  async createStructure(orgId: string, data: any) {
+    const structure = await this.db.create<any>("salary_structures", {
+      org_id: "00000000-0000-0000-0000-000000000000",
+      empcloud_org_id: Number(orgId),
+      name: data.name,
+      description: data.description || null,
+      is_default: data.isDefault || false,
+      is_active: true,
+    });
+
+    // Create components
+    if (data.components?.length) {
+      for (let i = 0; i < data.components.length; i++) {
+        const c = data.components[i];
+        await this.db.create("salary_components", {
+          structure_id: structure.id,
+          name: c.name,
+          code: c.code,
+          type: c.type,
+          calculation_type: c.calculationType,
+          value: c.value || 0,
+          percentage_of: c.percentageOf || null,
+          formula: c.formula || null,
+          is_taxable: c.isTaxable !== false,
+          is_statutory: c.isStatutory || false,
+          is_proratable: c.isProratable !== false,
+          is_active: true,
+          sort_order: c.sortOrder || i,
+        });
+      }
+    }
+
+    return structure;
+  }
+
+  async duplicateStructure(id: string, orgId: string, nameOverride?: string) {
+    const original = await this.getStructure(id, orgId);
+    const { data: components } = await this.getComponents(id);
+
+    const newName = (nameOverride && nameOverride.trim()) || `${original.name} (Copy)`;
+
+    const copy = await this.db.create<any>("salary_structures", {
+      org_id: original.org_id || "00000000-0000-0000-0000-000000000000",
+      empcloud_org_id: Number(orgId),
+      name: newName,
+      description: original.description || null,
+      is_default: false,
+      is_active: true,
+    });
+
+    for (let i = 0; i < components.length; i++) {
+      const c: any = components[i];
+      await this.db.create("salary_components", {
+        structure_id: copy.id,
+        name: c.name,
+        code: c.code,
+        type: c.type,
+        calculation_type: c.calculation_type,
+        value: c.value != null ? Number(c.value) : 0,
+        percentage_of: c.percentage_of || null,
+        formula: c.formula || null,
+        is_taxable: c.is_taxable !== false,
+        is_statutory: c.is_statutory === true,
+        is_proratable: c.is_proratable !== false,
+        is_active: true,
+        sort_order: c.sort_order ?? i,
+      });
+    }
+
+    return copy;
+  }
+
+  async updateStructure(id: string, orgId: string, data: any) {
+    await this.getStructure(id, orgId);
+
+    const updated = await this.db.update("salary_structures", id, {
+      name: data.name,
+      description: data.description,
+      is_default: data.isDefault,
+    });
+
+    // Reconcile components when the caller supplies the `components` array.
+    // The UI always posts the full current list, so the simplest correct
+    // behaviour is replace-all.
+    //
+    // We MUST hard-delete (not soft-delete). The table has a unique key on
+    // (structure_id, code) that ignores is_active, so a soft-delete followed
+    // by re-insert of the same code collides with the zombie row and MySQL
+    // returns ER_DUP_ENTRY. employee_salaries stores a JSON snapshot of
+    // components (not an FK to this row), so deleting the old rows is safe
+    // for history — but we DO need to refresh that snapshot for active
+    // assignments below, otherwise the UI keeps showing stale component
+    // amounts after a structure change.
+    let propagatedToEmployees = 0;
+    if (Array.isArray(data.components)) {
+      await this.db.deleteMany("salary_components", { structure_id: id });
+      for (let i = 0; i < data.components.length; i++) {
+        const c = data.components[i];
+        await this.db.create("salary_components", {
+          structure_id: id,
+          name: c.name,
+          code: c.code,
+          type: c.type,
+          calculation_type: c.calculationType,
+          value: c.value || 0,
+          percentage_of: c.percentageOf || null,
+          formula: c.formula || null,
+          is_taxable: c.isTaxable !== false,
+          is_statutory: c.isStatutory || false,
+          is_proratable: c.isProratable !== false,
+          is_active: true,
+          sort_order: c.sortOrder ?? i,
+        });
+      }
+
+      // Propagate the new component split to every ACTIVE employee_salaries
+      // row using this structure. Each row's CTC stays the same; we recompute
+      // the per-component breakdown from the new structure + that CTC.
+      // Without this, HR would update the structure (e.g. shift HRA from
+      // 30% to 50%) and existing assignees would still draw the old split.
+      propagatedToEmployees = await this.propagateStructureToAssignments(id);
+    }
+
+    return { ...updated, propagated_to_employees: propagatedToEmployees };
+  }
+
+  /**
+   * Recompute and update the JSON `components` snapshot on every active
+   * employee_salaries row for the given structure. CTC stays the same;
+   * components and gross_salary are derived afresh from the structure's
+   * current component definitions. Returns the count of rows touched.
+   */
+  private async propagateStructureToAssignments(structureId: string): Promise<number> {
+    const result = await this.db.findMany<any>("employee_salaries", {
+      filters: { structure_id: structureId, is_active: true },
+    });
+    const assignments = result.data;
+    let touched = 0;
+    for (const a of assignments) {
+      const ctc = Number(a.ctc);
+      if (!Number.isFinite(ctc) || ctc <= 0) continue;
+      const components = await this.resolveComponentsForCTC(structureId, ctc);
+      // Gross is the sum of EARNINGS only. The resolver now returns
+      // deductions and reimbursements as well (so the payslip can show
+      // them), and naively summing every monthlyAmount inflated gross
+      // by the deduction value -- e.g. for Priya with a ₹1,801 EPF line
+      // her gross was being saved as 845,004 + 21,612 = 866,616.
+      const grossSalary = components
+        .filter((c: any) => !c.type || c.type === "earning")
+        .reduce((sum: number, c: any) => sum + Number(c.monthlyAmount || 0) * 12, 0);
+      await this.db.update("employee_salaries", a.id, {
+        components: JSON.stringify(components),
+        gross_salary: grossSalary,
+        // net_salary is recomputed during payroll; refresh the gross-equal
+        // baseline so the UI doesn't show a stale net.
+        net_salary: grossSalary,
+      });
+      touched++;
+    }
+    return touched;
+  }
+
+  async deleteStructure(id: string, orgId: string) {
+    await this.getStructure(id, orgId);
+    await this.db.update("salary_structures", id, { is_active: false });
+    return { message: "Salary structure deactivated" };
+  }
+
+  async getComponents(structureId: string) {
+    return this.db.findMany<any>("salary_components", {
+      filters: { structure_id: structureId, is_active: true },
+      sort: { field: "sort_order", order: "asc" },
+    });
+  }
+
+  async addComponent(structureId: string, data: any) {
+    const created = await this.db.create("salary_components", {
+      structure_id: structureId,
+      name: data.name,
+      code: data.code,
+      type: data.type,
+      calculation_type: data.calculationType,
+      value: data.value || 0,
+      percentage_of: data.percentageOf || null,
+      formula: data.formula || null,
+      is_taxable: data.isTaxable !== false,
+      is_statutory: data.isStatutory || false,
+      is_proratable: data.isProratable !== false,
+      is_active: true,
+      sort_order: data.sortOrder || 0,
+    });
+    // Refresh active assignment snapshots so HR sees the new component
+    // immediately on every assigned employee.
+    await this.propagateStructureToAssignments(structureId);
+    return created;
+  }
+
+  async updateComponent(structureId: string, componentId: string, data: any) {
+    const component = await this.db.findOne<any>("salary_components", {
+      id: componentId,
+      structure_id: structureId,
+    });
+    if (!component) throw new AppError(404, "NOT_FOUND", "Component not found");
+    const updated = await this.db.update("salary_components", componentId, data);
+    await this.propagateStructureToAssignments(structureId);
+    return updated;
+  }
+
+  async assignToEmployee(data: any) {
+    // If caller didn't pre-compute components, derive them from the structure.
+    // This is the path that supports `balance` calculation: the structure is
+    // the source of truth, the resolver does the math from CTC.
+    let components = data.components;
+    // Per-employee pins: { componentCode: monthlyAmount }, positive only.
+    const overrides: Record<string, number> = {};
+    if (data.overrides && typeof data.overrides === "object") {
+      for (const [code, val] of Object.entries(data.overrides)) {
+        const n = Number(val);
+        if (code && Number.isFinite(n) && n > 0) overrides[code] = Math.round(n);
+      }
+    }
+    const hasOverrides = Object.keys(overrides).length > 0;
+    if (!components || components.length === 0) {
+      if (!data.structureId) {
+        throw new AppError(
+          400,
+          "MISSING_COMPONENTS",
+          "Either components[] or structureId is required.",
+        );
+      }
+      components = await this.resolveComponentsForCTC(
+        data.structureId,
+        Number(data.ctc),
+        overrides,
+      );
+    }
+
+    // Deactivate current salary. Also close out its effective window by
+    // stamping `effective_to` = the day before the new salary's
+    // `effective_from`, so the salary timeline is properly bounded (previously
+    // only `is_active` was flipped and `effective_to` stayed NULL, leaving the
+    // history undated). `is_active` remains the operative flag for the payroll
+    // engine's current-salary lookup; `effective_to` makes the history/audit
+    // and any date-windowed query correct.
+    let prevEffectiveTo: string | null = null;
+    const effFrom = data.effectiveFrom ? new Date(data.effectiveFrom) : null;
+    if (effFrom && !isNaN(effFrom.getTime())) {
+      const dayBefore = new Date(effFrom);
+      dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+      prevEffectiveTo = dayBefore.toISOString().slice(0, 10);
+    }
+    await this.db.updateMany(
+      "employee_salaries",
+      {
+        empcloud_user_id: Number(data.employeeId),
+        is_active: true,
+      },
+      prevEffectiveTo ? { is_active: false, effective_to: prevEffectiveTo } : { is_active: false },
+    );
+
+    // Gross = sum of EARNINGS only. See propagateStructureToAssignments
+    // for the same guard -- without it, a deduction component (EPF,
+    // canteen, welfare fund) gets added into gross_salary too.
+    const grossSalary = components
+      .filter((c: any) => !c.type || c.type === "earning")
+      .reduce((sum: number, c: any) => sum + Number(c.monthlyAmount || 0) * 12, 0);
+
+    // Soft sanity-check: HRA > Basic, components don't sum to CTC, etc.
+    // Surfaced in the response so HR sees the issue at save time --
+    // doesn't block the save, since some legacy structures depend on
+    // the existing math and we don't want to brick salary edits.
+    const warnings = checkResolvedComponents(components, Number(data.ctc));
+
+    const created = await this.db.create("employee_salaries", {
+      employee_id: "00000000-0000-0000-0000-000000000000",
+      empcloud_user_id: Number(data.employeeId),
+      structure_id: data.structureId,
+      ctc: data.ctc,
+      gross_salary: grossSalary,
+      net_salary: grossSalary, // Will be computed properly during payroll
+      components: JSON.stringify(components),
+      overrides: hasOverrides ? JSON.stringify(overrides) : null,
+      effective_from: data.effectiveFrom,
+      is_active: true,
+    });
+    return { ...(created as any), warnings };
+  }
+
+  // Delete a single salary-history record (a past revision). The CURRENT
+  // (active) salary cannot be deleted — an employee must always have an active
+  // salary; revise it instead. Used to clean up junk/test revisions from the
+  // Salary History view.
+  async deleteSalaryRecord(empId: string, salaryId: string) {
+    const salary = await this.db.findById<any>("employee_salaries", salaryId);
+    if (!salary || Number(salary.empcloud_user_id) !== Number(empId)) {
+      throw new AppError(404, "NOT_FOUND", "Salary record not found for this employee.");
+    }
+    if (salary.is_active) {
+      throw new AppError(
+        400,
+        "CANNOT_DELETE_ACTIVE",
+        "Cannot delete the current (active) salary. Revise it instead.",
+      );
+    }
+    await this.db.delete("employee_salaries", salaryId);
+    return { message: "Salary revision deleted" };
+  }
+
+  async getEmployeeSalary(employeeId: string) {
+    const salary = await this.db.findOne<any>("employee_salaries", {
+      empcloud_user_id: Number(employeeId),
+      is_active: true,
+    });
+    if (!salary) throw new AppError(404, "NOT_FOUND", "No active salary found for employee");
+    return salary;
+  }
+
+  async salaryRevision(employeeId: string, data: any) {
+    return this.assignToEmployee({ ...data, employeeId });
+  }
+
+  async bulkAssignSalary(
+    assignments: {
+      employeeId: string;
+      ctc: number;
+      bankDetails?: { accountNumber?: string; ifscCode?: string; bankName?: string };
+      pan?: string;
+      pfDetails?: { pfNumber?: string; uan?: string };
+    }[],
+    sharedData: { structureId: string; effectiveFrom: string; orgId: number },
+  ) {
+    const results: { employeeId: string; success: boolean; error?: string }[] = [];
+    const employeeService = new EmployeeService();
+
+    for (const { employeeId, ctc, bankDetails, pan, pfDetails } of assignments) {
+      try {
+        // The CSV "Employee ID" column carries either the numeric
+        // empcloud user id (rare — only when HR exported the directory
+        // with the technical id) or the human-readable emp_code like
+        // "EMP/BHI/2025/23" (the common case). `Number("EMP/...")` is
+        // NaN, which used to crash the SQL with "Unknown column 'NaN'
+        // in 'where clause'". Resolve to the numeric id once per row;
+        // try numeric first (cheap), then fall back to emp_code lookup.
+        let numericUserId: number | null = null;
+        const asNum = Number(employeeId);
+        if (Number.isFinite(asNum) && asNum > 0) {
+          const u = await findUserById(asNum);
+          if (u && u.organization_id === sharedData.orgId) numericUserId = u.id;
+        }
+        if (numericUserId == null) {
+          const u = await findUserByEmpCode(String(employeeId), sharedData.orgId);
+          if (u) numericUserId = u.id;
+        }
+        if (numericUserId == null) {
+          results.push({
+            employeeId,
+            success: false,
+            error: `No active employee found for "${employeeId}" (looked up by id and emp_code)`,
+          });
+          continue;
+        }
+
+        // Bank details (optional). Pass the resolved numeric id, never
+        // the raw CSV cell.
+        if (
+          bankDetails &&
+          (bankDetails.accountNumber || bankDetails.ifscCode || bankDetails.bankName)
+        ) {
+          try {
+            // updateBankDetails signature is (empcloudUserId, empcloudOrgId,
+            // details) — getByEmpCloudId() inside throws "Employee not
+            // found" if orgId !== ecUser.organization_id, and undefined
+            // never matches. We already have orgId on sharedData; thread
+            // it through.
+            await employeeService.updateBankDetails(numericUserId, sharedData.orgId, {
+              accountNumber: bankDetails.accountNumber,
+              ifscCode: bankDetails.ifscCode,
+              bankName: bankDetails.bankName,
+            });
+          } catch (bankErr: any) {
+            console.warn(`Bank details update failed for employee ${employeeId}:`, bankErr.message);
+            // Continue with salary assignment even if bank details update fails
+          }
+        }
+
+        // PAN — update tax_info if the CSV had a PAN column. Read-merge-write
+        // so we don't clobber other taxInfo fields (aadhar, deductions, etc).
+        if (pan && pan.trim()) {
+          try {
+            const existing =
+              (await employeeService.getTaxInfo(numericUserId, sharedData.orgId)) || {};
+            await employeeService.updateTaxInfo(numericUserId, sharedData.orgId, {
+              ...existing,
+              pan: pan.trim().toUpperCase(),
+            });
+          } catch (taxErr: any) {
+            console.warn(`PAN update failed for employee ${employeeId}:`, taxErr.message);
+          }
+        }
+
+        // PF Number / UAN — update pf_details. Same read-merge-write.
+        if (pfDetails && (pfDetails.pfNumber || pfDetails.uan)) {
+          try {
+            const existing =
+              (await employeeService.getPfDetails(numericUserId, sharedData.orgId)) || {};
+            await employeeService.updatePfDetails(numericUserId, sharedData.orgId, {
+              ...existing,
+              ...(pfDetails.pfNumber ? { pfNumber: pfDetails.pfNumber.trim() } : {}),
+              ...(pfDetails.uan ? { uan: pfDetails.uan.trim() } : {}),
+            });
+          } catch (pfErr: any) {
+            console.warn(`PF details update failed for employee ${employeeId}:`, pfErr.message);
+          }
+        }
+
+        // Resolve components from the chosen structure (supports `balance`
+        // calc type, percentage chains, etc). Falls back per-row to whatever
+        // the structure defines — no more hardcoded Basic/HRA/SA math here.
+        const components = await this.resolveComponentsForCTC(sharedData.structureId, ctc);
+        await this.assignToEmployee({
+          employeeId: String(numericUserId),
+          ctc,
+          components,
+          structureId: sharedData.structureId,
+          effectiveFrom: sharedData.effectiveFrom,
+        });
+        results.push({ employeeId, success: true });
+      } catch (err: any) {
+        results.push({ employeeId, success: false, error: err.message });
+      }
+    }
+    const failed = results.filter((r) => !r.success).length;
+    return { updated: results.length - failed, failed, results };
+  }
+
+  async computeArrears(
+    employeeId: string,
+    orgId: string,
+    params: {
+      oldMonthlyCTC: number;
+      newMonthlyCTC: number;
+      effectiveFrom: string;
+    },
+  ) {
+    const { oldMonthlyCTC, newMonthlyCTC, effectiveFrom } = params;
+    const monthlyDiff = Math.round(newMonthlyCTC - oldMonthlyCTC);
+    if (monthlyDiff <= 0) return { arrears: [], totalArrears: 0, monthlyDiff: 0 };
+
+    const fromDate = new Date(effectiveFrom);
+    const now = new Date();
+    const arrears: { month: number; year: number; amount: number }[] = [];
+
+    let year = fromDate.getFullYear();
+    let month = fromDate.getMonth() + 1;
+
+    while (
+      year < now.getFullYear() ||
+      (year === now.getFullYear() && month <= now.getMonth() + 1)
+    ) {
+      const existingPayslip = await this.db.raw<any>(
+        `SELECT id FROM payslips WHERE empcloud_user_id = ? AND month = ? AND year = ? AND status IN ('paid', 'computed', 'approved') LIMIT 1`,
+        [Number(employeeId), month, year],
+      );
+      const rows = Array.isArray(existingPayslip)
+        ? Array.isArray(existingPayslip[0])
+          ? existingPayslip[0]
+          : existingPayslip
+        : existingPayslip.rows || [];
+
+      if (rows.length > 0) {
+        arrears.push({ month, year, amount: monthlyDiff });
+      }
+
+      month++;
+      if (month > 12) {
+        month = 1;
+        year++;
+      }
+    }
+
+    const totalArrears = arrears.reduce((s, a) => s + a.amount, 0);
+    return { arrears, totalArrears, monthlyDiff };
+  }
+}

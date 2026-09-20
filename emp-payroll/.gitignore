@@ -1,0 +1,63 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+packages/server/.env
+packages/client/.env
+*.log
+logs/
+.DS_Store
+
+# SSH / deploy keys — NEVER commit
+*.pem
+*.key
+.ssh/
+deploy-keys/
+coverage/
+.turbo/
+
+# Claude Code local settings
+.claude/settings.local.json
+# Claude Code agent worktrees (full repo checkouts — never commit)
+.claude/worktrees/
+# Local backup snapshots
+packages/server/backups/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# VS Code (keep .vscode but ignore personal state)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# IDE
+*.swp
+*.swo
+*~
+.idea/
+
+# Playwright test artifacts
+test-results/
+playwright-report/
+packages/client/e2e/.auth/
+
+# Build
+*.tsbuildinfo
+
+# Docker volumes
+docker/data/
+
+# OS
+*.pid
+*.seed
+*.pid.lock
+
+
+.deployment.env
+*.deployment.env

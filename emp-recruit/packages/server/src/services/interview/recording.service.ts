@@ -1,0 +1,466 @@
+// ============================================================================
+// RECORDING & TRANSCRIPT SERVICE
+// Handles interview recording uploads, transcript generation, and management.
+// ============================================================================
+
+import { v4 as uuidv4 } from "uuid";
+import fs from "fs";
+import path from "path";
+import { getDB } from "../../db/adapters";
+import { NotFoundError } from "../../utils/errors";
+import { logger } from "../../utils/logger";
+import { transcribeFile, isTranscriptionEnabled } from "../ai/transcription";
+import { getLLM } from "../ai/llm";
+import { generateEvaluation } from "../ai/evaluation.service";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface InterviewRecording {
+  id: string;
+  organization_id: number;
+  interview_id: string;
+  file_path: string;
+  file_size: number | null;
+  duration_seconds: number | null;
+  mime_type: string | null;
+  uploaded_by: number;
+  uploaded_at: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface InterviewTranscript {
+  id: string;
+  organization_id: number;
+  interview_id: string;
+  recording_id: string | null;
+  content: string;
+  summary: string | null;
+  status: "processing" | "completed" | "failed";
+  generated_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+// ---------------------------------------------------------------------------
+// Upload a recording
+// ---------------------------------------------------------------------------
+
+export async function uploadRecording(
+  orgId: number,
+  interviewId: string,
+  file: Express.Multer.File,
+  uploadedBy: number,
+): Promise<InterviewRecording> {
+  const db = getDB();
+
+  // Verify interview belongs to org
+  const interview = await db.findOne("interviews", {
+    id: interviewId,
+    organization_id: orgId,
+  });
+  if (!interview) {
+    throw new NotFoundError("Interview", interviewId);
+  }
+
+  const now = new Date();
+  const recordingId = uuidv4();
+
+  const recording = await db.create<InterviewRecording>("interview_recordings", {
+    id: recordingId,
+    organization_id: orgId,
+    interview_id: interviewId,
+    file_path: file.path.replace(/\\/g, "/"),
+    file_size: file.size,
+    duration_seconds: null, // Would be extracted from the file in production
+    mime_type: file.mimetype,
+    uploaded_by: uploadedBy,
+    uploaded_at: now,
+    created_at: now,
+    updated_at: now,
+  });
+
+  logger.info(`Recording uploaded for interview ${interviewId} by user ${uploadedBy}`);
+
+  // Auto-generate the transcript: create a "processing" row now and run
+  // speech-to-text in the background so the upload response stays fast.
+  await autoTranscribe(orgId, interviewId, recordingId);
+
+  return recording;
+}
+
+// ---------------------------------------------------------------------------
+// Get a single recording
+// ---------------------------------------------------------------------------
+
+export async function getRecording(
+  orgId: number,
+  recordingId: string,
+): Promise<InterviewRecording> {
+  const db = getDB();
+
+  const recording = await db.findOne<InterviewRecording>("interview_recordings", {
+    id: recordingId,
+    organization_id: orgId,
+  });
+  if (!recording) {
+    throw new NotFoundError("Recording", recordingId);
+  }
+
+  return recording;
+}
+
+// ---------------------------------------------------------------------------
+// List recordings for an interview
+// ---------------------------------------------------------------------------
+
+export async function getRecordings(
+  orgId: number,
+  interviewId: string,
+): Promise<InterviewRecording[]> {
+  const db = getDB();
+
+  const result = await db.findMany<InterviewRecording>("interview_recordings", {
+    filters: { organization_id: orgId, interview_id: interviewId },
+    sort: { field: "uploaded_at", order: "desc" },
+    limit: 100,
+  });
+
+  return result.data;
+}
+
+// ---------------------------------------------------------------------------
+// Delete a recording
+// ---------------------------------------------------------------------------
+
+export async function deleteRecording(
+  orgId: number,
+  recordingId: string,
+): Promise<void> {
+  const db = getDB();
+
+  const recording = await db.findOne<InterviewRecording>("interview_recordings", {
+    id: recordingId,
+    organization_id: orgId,
+  });
+  if (!recording) {
+    throw new NotFoundError("Recording", recordingId);
+  }
+
+  // Delete the file from disk
+  try {
+    const filePath = path.resolve(recording.file_path);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (err) {
+    logger.warn(`Failed to delete recording file: ${recording.file_path}`, err);
+  }
+
+  // Delete any transcripts linked to this recording
+  await db.deleteMany("interview_transcripts", { recording_id: recordingId });
+
+  // Delete the DB record
+  await db.delete("interview_recordings", recordingId);
+
+  logger.info(`Recording ${recordingId} deleted`);
+}
+
+// ---------------------------------------------------------------------------
+// Generate transcript from a recording
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a fresh "processing" transcript row for an interview (replacing any
+ * prior one), so the UI can show a transcribing state immediately.
+ */
+async function createProcessingTranscript(
+  orgId: number,
+  interviewId: string,
+  recordingId: string,
+): Promise<InterviewTranscript> {
+  const db = getDB();
+  // One current transcript per interview.
+  await db.deleteMany("interview_transcripts", {
+    organization_id: orgId,
+    interview_id: interviewId,
+  });
+  const now = new Date();
+  return db.create<InterviewTranscript>("interview_transcripts", {
+    id: uuidv4(),
+    organization_id: orgId,
+    interview_id: interviewId,
+    recording_id: recordingId,
+    content: "",
+    summary: null,
+    status: "processing",
+    generated_at: null,
+    created_at: now,
+    updated_at: now,
+  });
+}
+
+/**
+ * Run speech-to-text on a recording and fill in the transcript row. Deepgram
+ * when configured; otherwise a placeholder so the flow works without a key.
+ */
+async function runTranscription(
+  orgId: number,
+  recordingId: string,
+  transcriptId: string,
+): Promise<InterviewTranscript> {
+  const db = getDB();
+  const recording = await db.findOne<InterviewRecording>("interview_recordings", {
+    id: recordingId,
+    organization_id: orgId,
+  });
+
+  let content: string;
+  let status: InterviewTranscript["status"] = "completed";
+
+  if (recording && isTranscriptionEnabled()) {
+    try {
+      const filePath = path.resolve(recording.file_path);
+      const result = await transcribeFile(filePath, recording.mime_type);
+      content = result.text || "(no speech detected)";
+      // Backfill the media duration we now know from the transcription.
+      if (result.durationSeconds != null && recording.duration_seconds == null) {
+        await db.update("interview_recordings", recordingId, {
+          duration_seconds: result.durationSeconds,
+        });
+      }
+      // Local Whisper returns one flat block with no speaker turns. Post-process
+      // with the LLM (best-effort) to split it into "Interviewer:"/"Candidate:"
+      // lines so the transcript reads as a dialogue. Without an LLM configured
+      // (or if it fails) the raw text is kept unchanged.
+      if (isMeaningfulTranscript(content)) {
+        content = await labelSpeakers(content);
+      }
+    } catch (err) {
+      logger.error(`Transcription failed for recording ${recordingId}:`, err);
+      content = "Transcription failed. Please retry.";
+      status = "failed";
+    }
+  } else {
+    content = generatePlaceholderTranscript();
+  }
+
+  logger.info(`Transcript ${status} for recording ${recordingId}`);
+  const updated = await db.update<InterviewTranscript>("interview_transcripts", transcriptId, {
+    content,
+    status,
+    generated_at: new Date(),
+    updated_at: new Date(),
+  });
+
+  // Once a real transcript exists, generate the AI candidate evaluation
+  // automatically — no manual "Run AI Analysis" click needed. Best-effort and
+  // non-blocking; silently skipped when no LLM provider is configured.
+  if (recording && status === "completed" && isMeaningfulTranscript(content)) {
+    void autoEvaluate(orgId, recording.interview_id);
+  }
+
+  return updated;
+}
+
+/** True when a transcript has enough real speech to be worth evaluating. */
+function isMeaningfulTranscript(content: string): boolean {
+  const t = content.trim();
+  return t.length > 20 && t !== "(no speech detected)";
+}
+
+/**
+ * Split a flat interview transcript into labelled speaker turns
+ * ("Interviewer:" / "Candidate:") using the configured LLM. Best-effort: if no
+ * provider is set or the call fails, the original text is returned unchanged.
+ * The model only re-segments and labels — it must not add, drop, or reword
+ * anything.
+ */
+async function labelSpeakers(rawText: string): Promise<string> {
+  const llm = getLLM();
+  if (!llm) return rawText;
+
+  const system =
+    "You format raw interview transcripts. The input is the unstructured " +
+    "transcript of a one-on-one job interview between two people: an Interviewer " +
+    "(who greets, asks the questions, and wraps up) and a Candidate (who answers). " +
+    "Rewrite it as a dialogue split into speaker turns.\n" +
+    "Rules:\n" +
+    "1. Prefix every turn with either 'Interviewer:' or 'Candidate:'.\n" +
+    "2. Put each turn on its own line, with a blank line between turns.\n" +
+    "3. Do NOT add, remove, summarise, translate, or reword any content — only " +
+    "insert the labels and line breaks and keep the original wording verbatim.\n" +
+    "4. The interviewer usually speaks first. Use the question/answer flow to " +
+    "decide who is speaking.\n" +
+    "5. Keep any markers like '(speaking in foreign language)' with the turn " +
+    "they belong to.\n" +
+    "Return only the formatted transcript, nothing else.";
+
+  // Retry on transient rate-limits (free OpenRouter tiers 429 often) with a
+  // short backoff, then give up and keep the raw text.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const out = await llm.complete({
+        system,
+        prompt: `Transcript:\n\n${rawText}`,
+        maxTokens: 2048,
+      });
+      const cleaned = out.trim();
+      // Guard against an empty/garbage response — only accept it if the model
+      // actually produced labelled turns.
+      return /Interviewer:|Candidate:/.test(cleaned) ? cleaned : rawText;
+    } catch (err) {
+      const msg = (err as Error)?.message || "";
+      const rateLimited = /\b429\b|rate.?limit/i.test(msg);
+      if (rateLimited && attempt < 3) {
+        await new Promise((r) => setTimeout(r, attempt * 4000));
+        continue;
+      }
+      logger.warn(`Speaker labelling failed; keeping the raw transcript: ${msg}`);
+      return rawText;
+    }
+  }
+  return rawText;
+}
+
+/**
+ * Fire-and-forget AI evaluation for an interview right after its transcript is
+ * ready. Skipped when no LLM provider is configured (leaves it for a manual run).
+ */
+async function autoEvaluate(orgId: number, interviewId: string): Promise<void> {
+  if (!getLLM()) return;
+  try {
+    await generateEvaluation(orgId, interviewId);
+    logger.info(`Auto AI evaluation generated for interview ${interviewId}`);
+  } catch (err) {
+    logger.error(`Auto AI evaluation failed for interview ${interviewId}:`, err);
+  }
+}
+
+/**
+ * Kick off transcription in the background (used right after an upload). Creates
+ * the processing row synchronously and returns it; STT runs after.
+ */
+export async function autoTranscribe(
+  orgId: number,
+  interviewId: string,
+  recordingId: string,
+): Promise<InterviewTranscript> {
+  const transcript = await createProcessingTranscript(orgId, interviewId, recordingId);
+  void runTranscription(orgId, recordingId, transcript.id).catch((err) =>
+    logger.error(`Auto-transcription failed for recording ${recordingId}:`, err),
+  );
+  return transcript;
+}
+
+/**
+ * Manual (re)generate for a specific recording. Non-blocking: returns a
+ * "processing" transcript immediately and runs speech-to-text in the background
+ * (a long video would otherwise block the HTTP request for minutes). The client
+ * polls the transcript until it completes.
+ */
+export async function generateTranscript(
+  orgId: number,
+  interviewId: string,
+  recordingId: string,
+): Promise<InterviewTranscript> {
+  const db = getDB();
+
+  const recording = await db.findOne<InterviewRecording>("interview_recordings", {
+    id: recordingId,
+    organization_id: orgId,
+    interview_id: interviewId,
+  });
+  if (!recording) {
+    throw new NotFoundError("Recording", recordingId);
+  }
+
+  const transcript = await createProcessingTranscript(orgId, interviewId, recordingId);
+  void runTranscription(orgId, recordingId, transcript.id).catch((err) =>
+    logger.error(`Transcription failed for recording ${recordingId}:`, err),
+  );
+  return transcript;
+}
+
+// ---------------------------------------------------------------------------
+// Get transcript for an interview
+// ---------------------------------------------------------------------------
+
+export async function getTranscript(
+  orgId: number,
+  interviewId: string,
+): Promise<InterviewTranscript | null> {
+  const db = getDB();
+
+  const transcript = await db.findOne<InterviewTranscript>("interview_transcripts", {
+    organization_id: orgId,
+    interview_id: interviewId,
+  });
+
+  return transcript;
+}
+
+// ---------------------------------------------------------------------------
+// Update transcript summary
+// ---------------------------------------------------------------------------
+
+export async function updateTranscriptSummary(
+  orgId: number,
+  transcriptId: string,
+  summary: string,
+): Promise<InterviewTranscript> {
+  const db = getDB();
+
+  const transcript = await db.findOne<InterviewTranscript>("interview_transcripts", {
+    id: transcriptId,
+    organization_id: orgId,
+  });
+  if (!transcript) {
+    throw new NotFoundError("Transcript", transcriptId);
+  }
+
+  const updated = await db.update<InterviewTranscript>("interview_transcripts", transcriptId, {
+    summary,
+    updated_at: new Date(),
+  });
+
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Generate a realistic placeholder transcript
+// ---------------------------------------------------------------------------
+
+function generatePlaceholderTranscript(): string {
+  return `[00:00:00] Interviewer: Good morning, thank you for joining us today. How are you?
+
+[00:00:05] Candidate: Good morning! I'm doing well, thank you for having me. I've been looking forward to this conversation.
+
+[00:00:15] Interviewer: Great to hear. Let's start with a brief introduction. Could you tell us about your background and what brings you to this role?
+
+[00:00:25] Candidate: Of course. I have about five years of experience in software development, primarily working with full-stack technologies. In my current role, I lead a team of four developers and we build internal tools that serve over 2,000 employees across the organization.
+
+[00:01:10] Interviewer: That sounds impressive. Can you walk us through a challenging project you worked on recently?
+
+[00:01:18] Candidate: Sure. Last quarter, we migrated our legacy monolith to a microservices architecture. The biggest challenge was maintaining zero downtime during the transition while handling over 10,000 daily active users. We used a strangler fig pattern and feature flags to gradually shift traffic.
+
+[00:02:45] Interviewer: How did you handle data consistency across services during the migration?
+
+[00:02:52] Candidate: We implemented an event-driven architecture using message queues. For critical operations, we used the saga pattern to maintain consistency. We also set up comprehensive monitoring and alerting so we could catch any discrepancies early.
+
+[00:03:30] Interviewer: Excellent approach. Now, let's discuss your experience with team leadership. How do you handle conflicts within your team?
+
+[00:03:40] Candidate: I believe in addressing conflicts early and directly. I schedule one-on-one meetings to understand each person's perspective, then facilitate a group discussion focused on finding common ground. I've found that most conflicts stem from miscommunication rather than fundamental disagreements.
+
+[00:04:20] Interviewer: That's a mature approach. Do you have any questions for us about the role or the company?
+
+[00:04:28] Candidate: Yes, I'd love to know more about the team structure and the tech stack you're currently using. Also, what does the onboarding process look like for new engineers?
+
+[00:04:45] Interviewer: Great questions. Let me walk you through that...
+
+[00:05:30] Interviewer: Thank you for your time today. We'll be in touch with next steps within the week.
+
+[00:05:35] Candidate: Thank you so much! I really enjoyed our conversation and I'm excited about the opportunity.`;
+}

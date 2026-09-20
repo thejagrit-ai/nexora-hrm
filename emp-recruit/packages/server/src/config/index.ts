@@ -1,0 +1,184 @@
+import dotenv from "dotenv";
+import path from "path";
+dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
+
+export const config = {
+  env: process.env.NODE_ENV || "development",
+  port: parseInt(process.env.PORT || "4500"),
+  host: process.env.HOST || "0.0.0.0",
+
+  // Recruit module database (recruitment-specific tables only)
+  db: {
+    host: process.env.DB_HOST || "localhost",
+    port: parseInt(process.env.DB_PORT || "3306"),
+    user: process.env.DB_USER || "root",
+    password: process.env.DB_PASSWORD || "",
+    name: process.env.DB_NAME || "emp_recruit",
+    poolMin: parseInt(process.env.DB_POOL_MIN || "2"),
+    poolMax: parseInt(process.env.DB_POOL_MAX || "10"),
+  },
+
+  // EmpCloud master database (users, organizations, auth — shared across modules)
+  empcloudDb: {
+    host: process.env.EMPCLOUD_DB_HOST || process.env.DB_HOST || "localhost",
+    port: parseInt(process.env.EMPCLOUD_DB_PORT || process.env.DB_PORT || "3306"),
+    user: process.env.EMPCLOUD_DB_USER || process.env.DB_USER || "root",
+    password: process.env.EMPCLOUD_DB_PASSWORD || process.env.DB_PASSWORD || "",
+    name: process.env.EMPCLOUD_DB_NAME || "empcloud",
+  },
+
+  // Redis (for queues, caching)
+  redis: {
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+    password: process.env.REDIS_PASSWORD || undefined,
+  },
+
+  // JWT
+  jwt: {
+    secret: process.env.JWT_SECRET || "change-this-in-production",
+    accessExpiry: process.env.JWT_ACCESS_EXPIRY || "2h",
+    refreshExpiry: process.env.JWT_REFRESH_EXPIRY || "7d",
+  },
+
+  // Email (interview invites, offer letters, notifications).
+  // Pluggable provider: "smtp" (nodemailer — Mailhog in dev, any SMTP in prod)
+  // or "sendgrid" (SendGrid Web API v3). Defaults to smtp.
+  email: {
+    provider: (process.env.EMAIL_PROVIDER || "smtp").toLowerCase(),
+    host: process.env.SMTP_HOST || "localhost",
+    port: parseInt(process.env.SMTP_PORT || "1025"),
+    user: process.env.SMTP_USER || "",
+    password: process.env.SMTP_PASSWORD || "",
+    from: process.env.SMTP_FROM || process.env.EMAIL_FROM || "recruit@empcloud.com",
+    sendgridApiKey: process.env.SENDGRID_API_KEY || "",
+  },
+
+  // CORS
+  cors: {
+    origin: process.env.CORS_ORIGIN || "http://localhost:5179",
+  },
+
+  // Public URLs used when building crawlable job feeds (Indeed, etc.).
+  // - apiBaseUrl: where the XML feed itself is served (this server).
+  // - siteBaseUrl: the public career-page site candidates apply on (the client),
+  //   used to build each job's apply URL in the feed.
+  publicUrls: {
+    // Public base of THIS server, used to build crawlable feed URLs submitted to
+    // LinkedIn/Indeed — must be a publicly reachable host, so it defaults to the
+    // product domain rather than localhost. Override per environment with
+    // PUBLIC_API_BASE_URL (e.g. http://localhost:4500 for local feed testing).
+    apiBaseUrl: process.env.PUBLIC_API_BASE_URL || "https://recruit.empcloud.com",
+    siteBaseUrl:
+      process.env.PUBLIC_SITE_BASE_URL || process.env.CORS_ORIGIN || "https://recruit.empcloud.com",
+  },
+
+  // Public client URL — used to build join links for embedded interview rooms
+  // (the <InterviewRoom> page lives in the client app, not this server).
+  clientUrl: process.env.CLIENT_URL || "http://localhost:5179",
+
+  // Public URL of THIS server — used as the OAuth redirect base for the
+  // meeting-provider connect flow (Google/Teams callbacks land here).
+  publicUrl: process.env.SERVER_PUBLIC_URL || "http://localhost:4500",
+
+  // Interview meeting providers. `defaultProvider` is the fallback when an org
+  // has no meeting_provider_configs row. Jitsi works with zero config (public
+  // rooms); set JAAS_* to switch to authenticated, recordable JaaS rooms.
+  // Google/Teams/Zoom credentials here are app-level defaults; per-org OAuth
+  // (Phase 2) overrides them.
+  meeting: {
+    defaultProvider: process.env.MEETING_DEFAULT_PROVIDER || "jitsi",
+    jitsi: {
+      // 'public' (meet.jit.si, no auth) | 'jaas' (8x8.vc, JWT-gated + recording)
+      mode: process.env.JITSI_MODE || (process.env.JAAS_APP_ID ? "jaas" : "public"),
+      domain: process.env.JITSI_DOMAIN || "meet.jit.si",
+      roomPrefix: process.env.JITSI_ROOM_PREFIX || "emprecruit",
+      jaas: {
+        appId: process.env.JAAS_APP_ID || "",
+        // JaaS API key id (the `kid` header). Format: <appId>/<keyid>
+        keyId: process.env.JAAS_KEY_ID || "",
+        // PEM private key; supports \n-escaped single-line env values
+        privateKey: (process.env.JAAS_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
+        domain: process.env.JAAS_DOMAIN || "8x8.vc",
+      },
+    },
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+    },
+    teams: {
+      clientId: process.env.MS_CLIENT_ID || "",
+      clientSecret: process.env.MS_CLIENT_SECRET || "",
+      tenantId: process.env.MS_TENANT_ID || "",
+    },
+    zoom: {
+      accountId: process.env.ZOOM_ACCOUNT_ID || "",
+      clientId: process.env.ZOOM_CLIENT_ID || "",
+      clientSecret: process.env.ZOOM_CLIENT_SECRET || "",
+    },
+  },
+
+  // AI — pluggable LLM (candidate evaluation, resume scoring) + speech-to-text.
+  // `provider` selects the LLM adapter; leave keys unset to run in heuristic /
+  // placeholder mode. "openai" also drives any OpenAI-compatible endpoint via
+  // OPENAI_BASE_URL (Together, Groq, OpenRouter, local, …).
+  ai: {
+    provider:
+      process.env.AI_PROVIDER ||
+      (process.env.ANTHROPIC_API_KEY
+        ? "anthropic"
+        : process.env.OPENAI_API_KEY
+          ? "openai"
+          : "none"),
+    anthropic: {
+      apiKey: process.env.ANTHROPIC_API_KEY || "",
+      // AI_MODEL applies to whichever provider is active (keeps switching easy).
+      model: process.env.ANTHROPIC_MODEL || process.env.AI_MODEL || "claude-opus-4-8",
+    },
+    openai: {
+      apiKey: process.env.OPENAI_API_KEY || "",
+      model: process.env.OPENAI_MODEL || process.env.AI_MODEL || "gpt-4o",
+      baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    },
+    // Retell AI powers the real-time voice interview (FoloUp-style). Create an
+    // agent in the Retell dashboard whose prompt uses the {{candidate_name}},
+    // {{job_title}} and {{questions}} dynamic variables, then set these and
+    // point its webhook at POST /api/v1/public/ai-interviews/retell-webhook.
+    retell: {
+      apiKey: process.env.RETELL_API_KEY || "",
+      agentId: process.env.RETELL_AGENT_ID || "",
+    },
+    // Resume scoring uses the deterministic heuristic by default so an
+    // individual score and a batch score for the same candidate always agree
+    // and are reproducible. LLM scoring is non-deterministic and rate-limited
+    // (a batch silently falls back mid-run, mixing two incomparable methods),
+    // so it's strictly opt-in via AI_RESUME_SCORING=llm.
+    resumeScoringLlm: process.env.AI_RESUME_SCORING === "llm",
+    // Speech-to-text for interview recordings. Pluggable: local Whisper (on
+    // device, no key — the default) upgrades to Deepgram or OpenAI Whisper the
+    // moment those keys are present.
+    transcription: {
+      provider:
+        process.env.STT_PROVIDER ||
+        (process.env.DEEPGRAM_API_KEY
+          ? "deepgram"
+          : process.env.OPENAI_API_KEY
+            ? "openai"
+            : "local"),
+      deepgram: {
+        apiKey: process.env.DEEPGRAM_API_KEY || "",
+        model: process.env.DEEPGRAM_MODEL || "nova-2",
+      },
+      openai: {
+        apiKey: process.env.OPENAI_API_KEY || "",
+        model: process.env.OPENAI_WHISPER_MODEL || "whisper-1",
+        baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+      },
+      // On-device Whisper via @xenova/transformers. base.en is a good CPU
+      // balance; use whisper-tiny.en for speed or whisper-small.en for accuracy.
+      local: {
+        model: process.env.WHISPER_MODEL || "Xenova/whisper-base.en",
+      },
+    },
+  },
+} as const;
