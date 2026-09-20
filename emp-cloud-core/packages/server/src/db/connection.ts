@@ -19,6 +19,7 @@ export async function initDB(): Promise<Knex> {
       user: config.db.user,
       password: config.db.password,
       database: config.db.name,
+      ssl: config.db.host.includes("aivencloud.com") || process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : undefined,
       // Return DATE columns as raw "YYYY-MM-DD" strings, but leave
       // DATETIME / TIMESTAMP alone (still come back as JS Date objects).
       //
