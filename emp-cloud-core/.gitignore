@@ -37,3 +37,4 @@ packages/server/logs/
 # Claude Code agent worktrees / local settings (never commit)
 .claude/worktrees/
 .claude/settings.local.json
+.vercel

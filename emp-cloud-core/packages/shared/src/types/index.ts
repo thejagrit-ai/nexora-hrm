@@ -615,6 +615,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface AccessTokenPayload {
   sub: number; // user ID
+  id?: number;
   org_id: number;
   email: string;
   role: UserRole;
