@@ -1,7 +1,0 @@
-packages:
-  - "packages/*"
-allowBuilds:
-  '@scarf/scarf': true
-  esbuild: true
-  msgpackr-extract: true
-  puppeteer: true

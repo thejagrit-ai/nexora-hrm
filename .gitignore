@@ -8,6 +8,7 @@ build/
 out/
 .next/
 coverage/
+*.tsbuildinfo
 
 # Environment files, Keys and Secrets
 .env
@@ -18,6 +19,9 @@ coverage/
 
 # Temporary, Logs and System files
 *.log
+logs/
+uploads/
+backups/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*

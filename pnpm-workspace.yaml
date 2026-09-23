@@ -1,0 +1,17 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+verifyDepsBeforeRun: false
+
+overrides:
+  "@types/node": "^20.19.9"
+
+onlyBuiltDependencies:
+  - esbuild
+  - "@scarf/scarf"
+  - msgpackr-extract
+  - protobufjs
+  - ffmpeg-static
+  - sharp
+  - puppeteer
