@@ -19,7 +19,8 @@
     "test:web": "pnpm --filter @empcloud/client test",
     "db:migrate": "pnpm --filter @empcloud/server migrate && pnpm --filter @emp-recruit/server db:migrate && pnpm --filter @emp-payroll/server db:migrate",
     "db:seed": "pnpm --filter @empcloud/server seed && pnpm --filter @emp-recruit/server db:seed && pnpm --filter @emp-payroll/server db:seed",
-    "clean": "pnpm -r --if-present clean"
+    "clean": "pnpm -r --if-present clean",
+    "deploy:api": "node scripts/deploy-api-vercel.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

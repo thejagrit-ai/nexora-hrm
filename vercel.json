@@ -4,11 +4,11 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://nexora-hrm-backend.onrender.com/api/$1"
+      "destination": "https://nexora-hrm-api.vercel.app/api/$1"
     },
     {
       "source": "/socket.io/(.*)",
-      "destination": "https://nexora-hrm-backend.onrender.com/socket.io/$1"
+      "destination": "https://nexora-hrm-api.vercel.app/socket.io/$1"
     },
     {
       "source": "/(.*)",

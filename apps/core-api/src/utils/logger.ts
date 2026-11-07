@@ -21,7 +21,9 @@ const prettyFormat = combine(
 
 const jsonFormat = combine(timestamp(), json());
 
-const productionTransports: winston.transport[] = [
+// Built lazily: DailyRotateFile creates the logs/ folder as soon as it is
+// constructed, which crashes on read-only serverless filesystems (Vercel).
+const productionTransports = (): winston.transport[] => [
   new DailyRotateFile({
     filename: "logs/%DATE%-combined.log",
     datePattern: "YYYY-MM-DD",
@@ -43,7 +45,7 @@ export const logger = winston.createLogger({
   format: config.log.format === "pretty" ? prettyFormat : jsonFormat,
   transports: [
     new winston.transports.Console(),
-    ...(process.env.NODE_ENV === "production" ? productionTransports : []),
+    ...(process.env.NODE_ENV === "production" && !process.env.VERCEL ? productionTransports() : []),
   ],
   silent: process.env.NODE_ENV === "test",
 });

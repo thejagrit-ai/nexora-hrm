@@ -35,3 +35,4 @@ scratch/
 .vercel
 .omc/
 .playwright-mcp/
+.deploy-api/

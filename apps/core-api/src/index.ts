@@ -79,7 +79,12 @@ import apiKeyRoutes from "./api/routes/api-key.routes.js";
 import locationLegacyRoutes from "./api/routes/location-legacy.routes.js";
 import assistantRoutes from "./api/routes/assistant.routes.js";
 
-async function main() {
+/**
+ * Builds the fully configured Express app (database, keys, routes, error
+ * handler) without opening a port or starting background jobs. The long-lived
+ * server (`main`) and the Vercel serverless entry (`api/index.mjs`) both use it.
+ */
+export async function buildApp() {
   // Initialize database
   await initDB();
 
@@ -316,6 +321,12 @@ async function main() {
   // Error handler (must be last)
   app.use(errorHandler);
 
+  return app;
+}
+
+async function main() {
+  const app = await buildApp();
+
   // Start background health check interval (every 60s)
   startHealthCheckInterval();
 
@@ -368,7 +379,11 @@ async function main() {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-main().catch((err) => {
-  logger.error("Failed to start server", err);
-  process.exit(1);
-});
+// On Vercel the app is served by a serverless function (api/index.mjs), which
+// imports `buildApp`. Do not open a port, start cron jobs or sockets there.
+if (!process.env.VERCEL) {
+  main().catch((err) => {
+    logger.error("Failed to start server", err);
+    process.exit(1);
+  });
+}

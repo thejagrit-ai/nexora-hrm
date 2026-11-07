@@ -21,8 +21,11 @@ let keyId: string | null = null;
 export function loadKeys(): void {
   try {
     const resolve = (p: string) => path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
-    privateKey = fs.readFileSync(resolve(config.oauth.privateKeyPath), "utf-8");
-    publicKey = fs.readFileSync(resolve(config.oauth.publicKeyPath), "utf-8");
+    // Serverless hosts have no key files: accept the PEM contents directly from
+    // RSA_PRIVATE_KEY / RSA_PUBLIC_KEY (literal "\n" sequences are expanded).
+    const fromEnv = (v?: string) => (v ? v.replace(/\\n/g, "\n") : undefined);
+    privateKey = fromEnv(process.env.RSA_PRIVATE_KEY) ?? fs.readFileSync(resolve(config.oauth.privateKeyPath), "utf-8");
+    publicKey = fromEnv(process.env.RSA_PUBLIC_KEY) ?? fs.readFileSync(resolve(config.oauth.publicKeyPath), "utf-8");
     // Derive kid from public key fingerprint
     keyId = crypto
       .createHash("sha256")
