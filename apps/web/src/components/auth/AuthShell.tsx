@@ -19,12 +19,12 @@ interface AuthShellProps {
 export default function AuthShell({ headline, badge, children, width = 420, dense = false }: AuthShellProps) {
   return (
     <div
-      className="min-h-dvh w-full bg-[#EEF1EC] text-[#10231D] lg:grid lg:grid-cols-[1fr_1fr]"
+      className="nx-auth min-h-dvh w-full bg-[#EEF1EC] text-[#10231D] lg:grid lg:grid-cols-[1fr_1fr]"
       style={{ fontFamily: "'Instrument Sans', system-ui, sans-serif", colorScheme: "light" }}
     >
       {/* Browsers repaint autofilled inputs (dark navy in dark OS themes). Keep them white. */}
       <style>{`
-        input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
+        html .nx-auth input:-webkit-autofill, html .nx-auth input:-webkit-autofill:hover, html .nx-auth input:-webkit-autofill:focus, html .nx-auth input:-webkit-autofill:active, html.dark .nx-auth input:-webkit-autofill, html.dark .nx-auth input:-webkit-autofill:hover, html.dark .nx-auth input:-webkit-autofill:focus, html.dark .nx-auth input:-webkit-autofill:active {
           -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
           -webkit-text-fill-color: #10231D !important;
           caret-color: #10231D;
