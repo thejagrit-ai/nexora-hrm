@@ -1,17 +1,19 @@
 import { forwardRef, useId, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
 
-interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type"> {
+interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "size"> {
   label: string;
   error?: string;
   type?: "text" | "email" | "password";
   /** Sits opposite the label (e.g. "Forgot password?"). */
   labelAction?: ReactNode;
+  /** "sm" is the tighter field used on the long register form. */
+  size?: "sm" | "md";
 }
 
 /** Fixed-theme form field shared by login and register. Password type gets its own show/hide control. */
 export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
-  ({ label, error, type = "text", labelAction, className = "", id, ...rest }, ref) => {
+  ({ label, error, type = "text", labelAction, size = "md", className = "", id, ...rest }, ref) => {
     const auto = useId();
     const inputId = id ?? auto;
     const [shown, setShown] = useState(false);
@@ -19,8 +21,8 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
 
     return (
       <div>
-        <div className="mb-2 flex items-center justify-between">
-          <label htmlFor={inputId} className="text-[15px] font-semibold">
+        <div className={`flex items-center justify-between ${size === "sm" ? "mb-1.5" : "mb-2"}`}>
+          <label htmlFor={inputId} className={`font-semibold ${size === "sm" ? "text-sm" : "text-[15px]"}`}>
             {label}
           </label>
           {labelAction}
@@ -32,7 +34,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
             type={isPassword && shown ? "text" : type}
             aria-invalid={!!error}
             aria-describedby={error ? `${inputId}-err` : undefined}
-            className={`h-14 w-full rounded-xl border-2 bg-white px-4 text-base text-[#10231D] outline-none transition-[border-color,box-shadow] placeholder:text-[#10231D]/35 focus:border-[#1B4D3E] focus:shadow-[0_0_0_4px_rgba(27,77,62,0.16)] ${
+            className={`${size === "sm" ? "h-12 [@media(max-height:820px)]:h-11" : "h-14"} w-full rounded-xl border-2 bg-white px-4 text-base text-[#10231D] outline-none transition-[border-color,box-shadow] placeholder:text-[#10231D]/35 focus:border-[#1B4D3E] focus:shadow-[0_0_0_4px_rgba(27,77,62,0.16)] ${
               error ? "border-[#C0392B]" : "border-[#10231D]/15 hover:border-[#10231D]/30"
             } ${isPassword ? "pr-14" : ""} ${className}`}
             {...rest}

@@ -68,16 +68,17 @@ export default function RegisterPage() {
     }
   };
 
-  // The form is long: bring a failed-submit message into view next to the button.
+  // Bring a failed-submit message into view next to the button.
   useEffect(() => {
     if (error) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [error]);
 
-  const group = "text-2xl font-extrabold tracking-[-0.02em]";
+  const group = "text-base font-bold tracking-[-0.01em] text-[#1B4D3E]";
 
   return (
     <AuthShell
-      width={560}
+      width={580}
+      dense
       headline="Your company, set up today."
       badge={
         <LoginBadge
@@ -91,108 +92,112 @@ export default function RegisterPage() {
         />
       }
     >
-      <h1 className="text-5xl font-extrabold leading-none tracking-[-0.03em]" style={DISPLAY}>
+      <h1 className="text-[34px] font-extrabold leading-none tracking-[-0.03em]" style={DISPLAY}>
         Create your Nexora HR account
       </h1>
-      <p className="mt-4 text-lg text-[#10231D]/70">{t("registerPage.header.subtitle")}</p>
+      <p className="mt-2 text-base text-[#10231D]/70">{t("registerPage.header.subtitle")}</p>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-9 space-y-9" noValidate>
-        <section className="space-y-5">
-          <h2 className={group} style={DISPLAY}>
-            {t("registerPage.section.organization")}
-          </h2>
+      <form onSubmit={handleSubmit(onSubmit)} className="mt-5 space-y-3.5" noValidate>
+        <h2 className={group} style={DISPLAY}>
+          {t("registerPage.section.organization")}
+        </h2>
+        <TextField
+          size="sm"
+          label={t("registerPage.field.companyName.label")}
+          placeholder={t("registerPage.field.companyName.placeholder")}
+          autoComplete="organization"
+          error={errors.org_name?.message}
+          {...register("org_name")}
+        />
+        <div className="grid grid-cols-[1fr_2fr] gap-3.5">
           <TextField
-            label={t("registerPage.field.companyName.label")}
-            placeholder={t("registerPage.field.companyName.placeholder")}
-            autoComplete="organization"
-            error={errors.org_name?.message}
-            {...register("org_name")}
+            size="sm"
+            label={t("registerPage.field.country.label")}
+            placeholder="IN"
+            error={errors.org_country?.message}
+            {...register("org_country")}
           />
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <TextField
-              label={t("registerPage.field.country.label")}
-              placeholder="IN"
-              error={errors.org_country?.message}
-              {...register("org_country")}
-            />
-            <TextField
-              label={t("registerPage.field.state.label")}
-              placeholder="Karnataka"
-              error={errors.org_state?.message}
-              {...register("org_state")}
-            />
-          </div>
-        </section>
-
-        <section className="space-y-5">
-          <h2 className={group} style={DISPLAY}>
-            {t("registerPage.section.adminAccount")}
-          </h2>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <TextField
-              label={t("registerPage.field.firstName.label")}
-              placeholder="Ananya"
-              autoComplete="given-name"
-              error={errors.first_name?.message}
-              {...register("first_name")}
-            />
-            <TextField
-              label={t("registerPage.field.lastName.label")}
-              placeholder="Gupta"
-              autoComplete="family-name"
-              error={errors.last_name?.message}
-              {...register("last_name")}
-            />
-          </div>
           <TextField
-            label={t("registerPage.field.email.label")}
-            type="email"
-            autoComplete="email"
-            placeholder={t("registerPage.field.email.placeholder")}
-            error={errors.email?.message}
-            {...register("email")}
+            size="sm"
+            label={t("registerPage.field.state.label")}
+            placeholder="Karnataka"
+            error={errors.org_state?.message}
+            {...register("org_state")}
           />
-          <div>
-            <TextField
-              label={t("registerPage.field.password.label")}
-              type="password"
-              autoComplete="new-password"
-              placeholder={t("registerPage.field.password.placeholder")}
-              error={errors.password?.message}
-              {...register("password")}
-            />
-            <PasswordStrength password={password} />
-          </div>
-        </section>
+        </div>
 
-        <div className="space-y-5">
+        <h2 className={`${group} pt-1.5`} style={DISPLAY}>
+          {t("registerPage.section.adminAccount")}
+        </h2>
+        <div className="grid grid-cols-2 gap-3.5">
+          <TextField
+            size="sm"
+            label={t("registerPage.field.firstName.label")}
+            placeholder="Ananya"
+            autoComplete="given-name"
+            error={errors.first_name?.message}
+            {...register("first_name")}
+          />
+          <TextField
+            size="sm"
+            label={t("registerPage.field.lastName.label")}
+            placeholder="Gupta"
+            autoComplete="family-name"
+            error={errors.last_name?.message}
+            {...register("last_name")}
+          />
+        </div>
+        <TextField
+          size="sm"
+          label={t("registerPage.field.email.label")}
+          type="email"
+          autoComplete="email"
+          placeholder={t("registerPage.field.email.placeholder")}
+          error={errors.email?.message}
+          {...register("email")}
+        />
+        <div>
+          <TextField
+            size="sm"
+            label={t("registerPage.field.password.label")}
+            type="password"
+            autoComplete="new-password"
+            placeholder={t("registerPage.field.password.placeholder")}
+            error={errors.password?.message}
+            {...register("password")}
+          />
+          <PasswordStrength password={password} compact />
+        </div>
+
         {error && (
           <div
             ref={errorRef}
-            className="flex items-start gap-3 rounded-xl bg-[#F7D9D4] px-4 py-3.5 text-[15px] text-[#7A1F14]"
+            className="flex items-start gap-3 rounded-xl bg-[#F7D9D4] px-4 py-3 text-[15px] text-[#7A1F14]"
             role="alert"
           >
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
             <span>{error}</span>
           </div>
         )}
-        <SubmitButton busy={isSubmitting}>
-          {isSubmitting ? (
-            <>
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span>{t("registerPage.submit.creating")}</span>
-            </>
-          ) : (
-            <>
-              <span>{t("registerPage.submit.default")}</span>
-              <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
-            </>
-          )}
-        </SubmitButton>
+
+        <div className="pt-1">
+          <SubmitButton busy={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span>{t("registerPage.submit.creating")}</span>
+              </>
+            ) : (
+              <>
+                <span>{t("registerPage.submit.default")}</span>
+                <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+              </>
+            )}
+          </SubmitButton>
         </div>
       </form>
 
-      <p className="mt-9 text-base text-[#10231D]/70">
+      <p className="mt-4 text-base text-[#10231D]/70">
         {t("registerPage.footer.alreadyHaveAccount")}{" "}
         <Link
           to="/login"

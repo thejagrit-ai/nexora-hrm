@@ -8,31 +8,35 @@ import api from "./client";
 
 // --- Auth ---
 
+// Fail with a clear message instead of spinning forever when the API is down.
+// 40s leaves room for a free-tier host waking from sleep.
+const AUTH_TIMEOUT_MS = 40_000;
+
 export function useLogin() {
   return useMutation({
     mutationFn: (data: { email: string; password: string }) =>
-      api.post("/auth/login", data).then((r) => r.data.data),
+      api.post("/auth/login", data, { timeout: AUTH_TIMEOUT_MS }).then((r) => r.data.data),
   });
 }
 
 export function useRegister() {
   return useMutation({
     mutationFn: (data: object) =>
-      api.post("/auth/register", data).then((r) => r.data.data),
+      api.post("/auth/register", data, { timeout: AUTH_TIMEOUT_MS }).then((r) => r.data.data),
   });
 }
 
 export function useForgotPassword() {
   return useMutation({
     mutationFn: (data: { email: string }) =>
-      api.post("/auth/forgot-password", data).then((r) => r.data),
+      api.post("/auth/forgot-password", data, { timeout: AUTH_TIMEOUT_MS }).then((r) => r.data),
   });
 }
 
 export function useResetPassword() {
   return useMutation({
     mutationFn: (data: { token: string; password: string }) =>
-      api.post("/auth/reset-password", data).then((r) => r.data),
+      api.post("/auth/reset-password", data, { timeout: AUTH_TIMEOUT_MS }).then((r) => r.data),
   });
 }
 
