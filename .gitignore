@@ -31,3 +31,7 @@ Thumbs.db
 .idea/
 .gemini/
 scratch/
+
+.vercel
+.omc/
+.playwright-mcp/

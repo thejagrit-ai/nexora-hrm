@@ -1,14 +1,13 @@
 // =============================================================================
-// EMP CLOUD — Email Service
+// NEXORA HR — Email Service
 //
-// Inline HTML templates for the transactional emails EMP Cloud sends:
-// password reset, user invitation, and post-registration welcome.
+// Inline HTML templates for the transactional emails NEXORA HR sends:
+// password reset, user invitation, email-change notice and welcome.
 //
 // Transport selection (in order):
-//   1. SendGrid — when SENDGRID_API_KEY is set. Preferred in prod.
-//   2. SMTP via nodemailer — when SMTP_HOST is set. Used by local dev
-//      pointing at Mailpit/MailHog (no SendGrid account required) and by
-//      self-hosted deployments using their own mail relay.
+//   1. SendGrid — when SENDGRID_API_KEY is set.
+//   2. SMTP via nodemailer — when SMTP_HOST is set (Brevo in production,
+//      Mailpit/MailHog in local dev).
 //   3. No-op — neither configured. sendEmail() logs the would-be delivery
 //      at info level and returns. Keeps dev working with zero config and
 //      keeps tests deterministic.
@@ -135,41 +134,47 @@ function htmlToPlainText(html: string): string {
 // Shared layout
 // ---------------------------------------------------------------------------
 
-function logoUrl(): string {
-  return `${config.baseUrl.replace(/\/+$/, "")}/static/empcloud.png`;
-}
+const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
 
 function layout(innerHtml: string, preheader: string): string {
   return `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EMP Cloud</title></head>
-<body style="margin:0;padding:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2937;">
-<span style="display:none;visibility:hidden;opacity:0;height:0;width:0;overflow:hidden;">${escapeHtml(preheader)}</span>
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f6f8;padding:32px 16px;">
-<tr><td align="center">
-<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
-<tr><td align="center" style="padding:28px 32px;border-bottom:1px solid #e5e7eb;text-align:center;">
-<img src="${escapeHtml(logoUrl())}" alt="EMP Cloud" width="160" style="display:block;margin:0 auto;max-width:160px;height:auto;border:0;outline:none;text-decoration:none;">
-</td></tr>
-<tr><td style="padding:32px;">${innerHtml}</td></tr>
-<tr><td style="padding:20px 32px;border-top:1px solid #e5e7eb;background:#f9fafb;color:#6b7280;font-size:12px;text-align:center;">
-Sent by EMP Cloud • If you didn't expect this email, you can safely ignore it.
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light"><title>NEXORA HR</title></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:${FONT};color:#1f2937;-webkit-text-size-adjust:100%;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(preheader)}&#8199;&zwnj;&#8199;&zwnj;&#8199;&zwnj;</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f3f4f6;">
+<tr><td align="center" style="padding:40px 16px;">
+<table role="presentation" width="560" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:560px;">
+<tr><td style="padding:0 4px 20px;font-family:${FONT};font-size:18px;font-weight:700;letter-spacing:0.5px;color:#111827;">NEXORA<span style="color:#4f46e5;"> HR</span></td></tr>
+<tr><td style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;padding:36px 36px 32px;font-family:${FONT};font-size:15px;line-height:1.6;color:#374151;">${innerHtml}</td></tr>
+<tr><td style="padding:20px 4px 0;font-family:${FONT};font-size:12px;line-height:1.6;color:#9ca3af;">
+This is an automated message from NEXORA HR. Please do not reply to this email.<br>
+If you weren't expecting it, you can safely ignore it.
 </td></tr>
 </table></td></tr></table></body></html>`;
 }
 
+function heading(text: string): string {
+  return `<h1 style="margin:0 0 20px;font-family:${FONT};font-size:20px;line-height:1.3;font-weight:600;color:#111827;">${text}</h1>`;
+}
+
+function para(html: string): string {
+  return `<p style="margin:0 0 16px;">${html}</p>`;
+}
+
+function note(html: string): string {
+  return `<p style="margin:0 0 12px;font-size:13px;line-height:1.6;color:#6b7280;">${html}</p>`;
+}
+
+function linkFallback(href: string): string {
+  return `${note("Button not working? Copy and paste this link into your browser:")}
+<p style="margin:0;font-size:13px;line-height:1.5;word-break:break-all;"><a href="${escapeHtml(href)}" style="color:#4f46e5;text-decoration:underline;">${escapeHtml(href)}</a></p>`;
+}
+
 function button(label: string, href: string): string {
-  // Centered via an outer wrapper table with align="center" + text-align,
-  // which is the only combo that holds across Gmail, Apple Mail, Outlook
-  // (incl. older Outlook on Windows which ignores `margin:auto` on tables)
-  // and the major webmail clients. The inner table keeps the rounded
-  // background pill that wraps the anchor.
-  return `<table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin:24px 0;border-collapse:collapse;">
-<tr><td align="center" style="text-align:center;">
-<table role="presentation" align="center" cellspacing="0" cellpadding="0" border="0" style="margin:0 auto;border-collapse:collapse;">
-<tr><td style="border-radius:8px;background:#2563eb;">
-<a href="${escapeHtml(href)}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">${escapeHtml(label)}</a>
-</td></tr></table>
+  return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:8px 0 28px;">
+<tr><td style="border-radius:6px;background:#4f46e5;">
+<a href="${escapeHtml(href)}" style="display:inline-block;padding:12px 22px;font-family:${FONT};font-size:15px;font-weight:600;line-height:1;color:#ffffff;text-decoration:none;border-radius:6px;">${escapeHtml(label)}</a>
 </td></tr></table>`;
 }
 
@@ -191,19 +196,18 @@ function escapeHtml(s: string): string {
 function messageToParagraphs(message: string): string {
   return message
     .split(/\n{2,}/)
-    .map((para) => {
-      const html = escapeHtml(para.trim()).replace(/\n/g, "<br>");
-      return html ? `<p style="margin:0 0 12px;line-height:1.6;">${html}</p>` : "";
+    .map((p) => {
+      const html = escapeHtml(p.trim()).replace(/\n/g, "<br>");
+      return html ? para(html) : "";
     })
     .filter(Boolean)
     .join("\n");
 }
 
 /**
- * Send a branded email from a plain-text message body — used by the
+ * Render a branded email from a plain-text message body — used by the
  * template-driven emails (e.g. probation confirmation). Wraps the message in
- * the same header/footer layout as the transactional emails. Returns whether a
- * transport actually accepted the message.
+ * the same layout as the transactional emails.
  */
 export function renderBrandedEmail(message: string): { html: string; text: string } {
   return {
@@ -231,8 +235,7 @@ export async function sendBrandedEmail(params: {
 
 /**
  * Password reset email — sent when a user requests to reset their password.
- * Contains a link back to the EMP Cloud client's reset page with the
- * single-use token.
+ * Contains a link back to the web app's reset page with the single-use token.
  */
 export async function sendPasswordResetEmail(params: {
   to: string;
@@ -243,22 +246,27 @@ export async function sendPasswordResetEmail(params: {
   const greeting = params.firstName ? `Hi ${escapeHtml(params.firstName)},` : "Hi,";
 
   const html = layout(
-    `
-    <h1 style="margin:0 0 16px;font-size:22px;color:#111827;">Reset your password</h1>
-    <p style="margin:0 0 12px;line-height:1.6;">${greeting}</p>
-    <p style="margin:0 0 12px;line-height:1.6;">We received a request to reset the password on your EMP Cloud account. Click the button below to choose a new password. The link is valid for one hour.</p>
-    ${button("Reset my password", url)}
-    <p style="margin:0 0 12px;line-height:1.6;color:#6b7280;font-size:13px;">If the button doesn't work, paste this link into your browser:</p>
-    <p style="margin:0 0 12px;word-break:break-all;font-size:13px;"><a href="${escapeHtml(url)}" style="color:#2563eb;">${escapeHtml(url)}</a></p>
-    <p style="margin:24px 0 0;line-height:1.6;color:#6b7280;font-size:13px;">If you didn't request this, you can safely ignore this email. Your password won't change.</p>
-    `,
-    "Reset your EMP Cloud password",
+    [
+      heading("Reset your password"),
+      para(greeting),
+      para(
+        "We received a request to reset the password for your NEXORA HR account. Use the button below to choose a new one. This link expires in 1 hour and can only be used once.",
+      ),
+      button("Reset password", url),
+      linkFallback(url),
+      `<hr style="border:0;border-top:1px solid #e5e7eb;margin:28px 0 20px;">`,
+      note(
+        "If you didn't request a password reset, no action is needed — your password will stay the same. If you're concerned about your account's security, contact your HR administrator.",
+      ),
+    ].join("\n"),
+    "Use this link to reset your NEXORA HR password. It expires in 1 hour.",
   );
 
   await sendEmail({
     to: params.to,
-    subject: "Reset your EMP Cloud password",
+    subject: "Reset your NEXORA HR password",
     html,
+    text: `${params.firstName ? `Hi ${params.firstName},` : "Hi,"}\n\nWe received a request to reset your NEXORA HR password. Open this link to choose a new one (valid for 1 hour, single use):\n\n${url}\n\nIf you didn't request this, you can ignore this email — your password will not change.`,
   });
 }
 
@@ -280,34 +288,35 @@ export async function sendInvitationEmail(params: {
   const roleLabel = escapeHtml(params.role.replace(/_/g, " "));
 
   const html = layout(
-    `
-    <h1 style="margin:0 0 16px;font-size:22px;color:#111827;">You're invited to join ${escapeHtml(params.orgName)}</h1>
-    <p style="margin:0 0 12px;line-height:1.6;">${greeting}</p>
-    <p style="margin:0 0 12px;line-height:1.6;"><strong>${escapeHtml(params.invitedByName)}</strong> has invited you to join <strong>${escapeHtml(params.orgName)}</strong> on EMP Cloud as a <strong>${roleLabel}</strong>.</p>
-    <p style="margin:0 0 12px;line-height:1.6;">Click the button below to accept the invitation and set up your account. This link is valid for 7 days.</p>
-    ${button("Accept invitation", url)}
-    <p style="margin:0 0 12px;line-height:1.6;color:#6b7280;font-size:13px;">If the button doesn't work, paste this link into your browser:</p>
-    <p style="margin:0 0 12px;word-break:break-all;font-size:13px;"><a href="${escapeHtml(url)}" style="color:#2563eb;">${escapeHtml(url)}</a></p>
-    `,
-    `You've been invited to join ${params.orgName} on EMP Cloud`,
+    [
+      heading(`Join ${escapeHtml(params.orgName)} on NEXORA HR`),
+      para(greeting),
+      para(
+        `<strong>${escapeHtml(params.invitedByName)}</strong> has invited you to join <strong>${escapeHtml(params.orgName)}</strong> on NEXORA HR with the role of <strong>${roleLabel}</strong>.`,
+      ),
+      para(
+        "Accept the invitation to set your password and activate your account. The invitation expires in 7 days.",
+      ),
+      button("Accept invitation", url),
+      linkFallback(url),
+    ].join("\n"),
+    `${params.invitedByName} invited you to join ${params.orgName} on NEXORA HR.`,
   );
 
   await sendEmail({
     to: params.to,
-    subject: `You've been invited to join ${params.orgName} on EMP Cloud`,
+    subject: `${params.invitedByName} invited you to join ${params.orgName} on NEXORA HR`,
     html,
+    text: `${params.firstName ? `Hi ${params.firstName},` : "Hi,"}\n\n${params.invitedByName} has invited you to join ${params.orgName} on NEXORA HR as ${params.role.replace(/_/g, " ")}.\n\nAccept the invitation (valid for 7 days):\n${url}`,
   });
 }
 
 /**
  * Email-change notification — sent to BOTH the old and new addresses
- * after an HR admin updates an employee's login email. Same branded
- * layout the password-reset / invitation emails use, so it doesn't
- * read as a phishing attempt next to those.
+ * after an HR admin updates an employee's login email.
  *
- * recipientType differentiates the explanatory line:
- *   "old" → "This message was sent to your previous address."
- *   "new" → "This message was sent to your new address as confirmation."
+ *   "old" → security notice to the previous address.
+ *   "new" → confirmation to the new address.
  */
 export async function sendEmailChangedNotification(params: {
   to: string;
@@ -319,41 +328,35 @@ export async function sendEmailChangedNotification(params: {
   const greeting = params.firstName ? `Hi ${escapeHtml(params.firstName)},` : "Hi,";
   const recipientNote =
     params.recipientType === "old"
-      ? "This message was sent to your previous address as a security notice."
-      : "This message was sent to your new address as confirmation. Use it to sign in from now on.";
+      ? "You are receiving this notice at your previous address. You will no longer be able to sign in with it."
+      : "You are receiving this confirmation at your new address. Use it to sign in from now on.";
   const loginUrl = `${config.email.appUrl.replace(/\/+$/, "")}/login`;
+  const row = (label: string, value: string, top: boolean) =>
+    `<tr><td style="padding:12px 16px;font-size:13px;color:#6b7280;width:130px;${top ? "border-top:1px solid #e5e7eb;" : ""}">${label}</td><td style="padding:12px 16px;font-size:14px;color:#111827;font-weight:600;${top ? "border-top:1px solid #e5e7eb;" : ""}">${escapeHtml(value)}</td></tr>`;
+
   const html = layout(
-    `
-    <h1 style="margin:0 0 16px;font-size:22px;color:#111827;">Your EMP Cloud login email was changed</h1>
-    <p style="margin:0 0 12px;line-height:1.6;">${greeting}</p>
-    <p style="margin:0 0 16px;line-height:1.6;">Your administrator updated the email you use to sign in to EMP Cloud.</p>
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border-collapse:collapse;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;width:100%;">
-      <tr>
-        <td style="padding:12px 16px;font-size:13px;color:#6b7280;width:120px;">Previous email</td>
-        <td style="padding:12px 16px;font-size:13px;color:#111827;font-family:ui-monospace,Consolas,monospace;">${escapeHtml(params.oldEmail)}</td>
-      </tr>
-      <tr>
-        <td style="padding:12px 16px;font-size:13px;color:#6b7280;border-top:1px solid #e5e7eb;">New email</td>
-        <td style="padding:12px 16px;font-size:13px;color:#111827;font-family:ui-monospace,Consolas,monospace;border-top:1px solid #e5e7eb;font-weight:600;">${escapeHtml(params.newEmail)}</td>
-      </tr>
-    </table>
-    <p style="margin:0 0 16px;line-height:1.6;color:#374151;">${recipientNote}</p>
-    ${button("Sign in to EMP Cloud", loginUrl)}
-    <p style="margin:24px 0 0;line-height:1.6;color:#dc2626;font-size:13px;"><strong>Didn't request this change?</strong> Contact your HR administrator immediately — your account may have been compromised.</p>
-    `,
-    "Your EMP Cloud login email was changed",
+    [
+      heading("Your login email was changed"),
+      para(greeting),
+      para("Your administrator updated the email address you use to sign in to NEXORA HR."),
+      `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 20px;border:1px solid #e5e7eb;border-radius:6px;border-collapse:separate;">${row("Previous email", params.oldEmail, false)}${row("New email", params.newEmail, true)}</table>`,
+      para(recipientNote),
+      button("Sign in", loginUrl),
+      `<hr style="border:0;border-top:1px solid #e5e7eb;margin:8px 0 20px;">`,
+      note("<strong>Didn't expect this change?</strong> Contact your HR administrator right away."),
+    ].join("\n"),
+    "Your NEXORA HR login email was changed.",
   );
 
   await sendEmail({
     to: params.to,
-    subject: "Your EMP Cloud login email was changed",
+    subject: "Your NEXORA HR login email was changed",
     html,
   });
 }
 
 /**
  * Welcome email — sent after a brand-new org admin finishes registration.
- * Sign-in link takes them straight to the dashboard.
  */
 export async function sendWelcomeEmail(params: {
   to: string;
@@ -361,26 +364,24 @@ export async function sendWelcomeEmail(params: {
   orgName: string;
 }): Promise<void> {
   const url = `${config.email.appUrl.replace(/\/+$/, "")}/login`;
+  const li = (t: string) => `<li style="margin:0 0 8px;">${t}</li>`;
 
   const html = layout(
-    `
-    <h1 style="margin:0 0 16px;font-size:22px;color:#111827;">Welcome to EMP Cloud, ${escapeHtml(params.firstName)}!</h1>
-    <p style="margin:0 0 12px;line-height:1.6;">Your organization <strong>${escapeHtml(params.orgName)}</strong> is ready on EMP Cloud. You can sign in any time to start managing your workforce, onboarding employees, tracking leave, running payroll and more.</p>
-    ${button("Sign in to EMP Cloud", url)}
-    <p style="margin:24px 0 12px;line-height:1.6;font-weight:600;color:#111827;">What's next?</p>
-    <ul style="margin:0 0 16px;padding-left:20px;line-height:1.8;color:#374151;">
-      <li>Finish the onboarding wizard to add departments, locations and an office calendar</li>
-      <li>Invite your team — they'll receive an email to set up their account</li>
-      <li>Enable the modules (Payroll, Recruit, Exit, etc.) your company needs</li>
-    </ul>
-    <p style="margin:0;line-height:1.6;color:#6b7280;font-size:13px;">If you have any questions, just reply to this email — we're happy to help.</p>
-    `,
-    `Welcome to EMP Cloud, ${params.firstName}!`,
+    [
+      heading(`Welcome to NEXORA HR, ${escapeHtml(params.firstName)}`),
+      para(
+        `Your organization <strong>${escapeHtml(params.orgName)}</strong> has been created and is ready to use.`,
+      ),
+      button("Sign in to NEXORA HR", url),
+      para("<strong>To get started:</strong>"),
+      `<ul style="margin:0 0 20px;padding-left:20px;">${li("Complete the setup wizard — departments, locations and your office calendar")}${li("Invite your team so they can set up their accounts")}${li("Enable the modules your company needs, such as payroll and recruitment")}</ul>`,
+    ].join("\n"),
+    `Your organization ${params.orgName} is ready on NEXORA HR.`,
   );
 
   await sendEmail({
     to: params.to,
-    subject: `Welcome to EMP Cloud, ${params.firstName}!`,
+    subject: `Welcome to NEXORA HR, ${params.firstName}`,
     html,
   });
 }
