@@ -5,9 +5,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { resetPasswordSchema, type ResetPasswordInput } from "@empcloud/shared";
 import { useResetPassword } from "@/api/hooks";
-import { Eye, EyeOff, ArrowLeft } from "lucide-react";
-import LanguageSwitcher from "@/components/LanguageSwitcher";
-import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { AlertCircle, AlertTriangle, ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
+import AuthShell, { DISPLAY } from "@/components/auth/AuthShell";
+import LoginBadge, { type BadgeStatus } from "@/components/auth/LoginBadge";
+import { TextField, SubmitButton } from "@/components/auth/TextField";
+import PasswordStrength from "@/components/auth/PasswordStrength";
 
 interface FormValues {
   password: string;
@@ -21,7 +23,7 @@ export default function ResetPasswordPage() {
   const token = searchParams.get("token") ?? "";
   const reset = useResetPassword();
   const [error, setError] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [done, setDone] = useState(false);
 
   const {
     register,
@@ -30,14 +32,15 @@ export default function ResetPasswordPage() {
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(
-      resetPasswordSchema
-        .pick({ password: true })
-        .extend({ confirmPassword: resetPasswordSchema.shape.password }),
+      resetPasswordSchema.pick({ password: true }).extend({ confirmPassword: resetPasswordSchema.shape.password }),
     ),
     defaultValues: { password: "", confirmPassword: "" },
   });
 
-  const password = watch("password");
+  const password = watch("password") ?? "";
+  const confirm = watch("confirmPassword") ?? "";
+  const mismatch = !!confirm && password !== confirm;
+  const status: BadgeStatus = done ? "granted" : isSubmitting ? "verifying" : error ? "denied" : "idle";
 
   const onSubmit = async (data: FormValues) => {
     setError("");
@@ -52,128 +55,107 @@ export default function ResetPasswordPage() {
     try {
       const payload: ResetPasswordInput = { token, password: data.password };
       await reset.mutateAsync(payload);
-      // Bounce back to login with a query flag the LoginPage could
-      // optionally read; even without that, the toast on LoginPage from
-      // a fresh mount is enough.
+      setDone(true);
       navigate("/login?reset=success", { replace: true });
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || "Reset failed");
+      setError(
+        !err.response
+          ? "Can't reach the server. Check your connection and try again."
+          : err.response?.data?.error?.message || "Couldn't reset the password. Request a new link and try again.",
+      );
     }
   };
 
+  const badge = (
+    <LoginBadge
+      name=""
+      subline=""
+      placeholderName="New password"
+      placeholderSubline="Choose one you don't use elsewhere"
+      passwordLength={password.length}
+      status={status}
+      labels={{ idle: "Badge on hold", verifying: "Updating…", granted: "Password updated", denied: "Not updated" }}
+    />
+  );
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="absolute top-4 right-4 flex items-center gap-2">
-        <ThemeToggle />
-        <LanguageSwitcher />
-      </div>
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <img src="/empcloud-logo.png" alt="EmpCloud" className="h-12 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-foreground">
+    <AuthShell headline="Choose a new password." badge={badge}>
+      {!token ? (
+        <div role="alert">
+          <div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#FBEBC6] text-[#5C4310]">
+            <AlertTriangle className="h-7 w-7" />
+          </div>
+          <h1 className="mt-6 text-5xl font-extrabold leading-none tracking-[-0.03em]" style={DISPLAY}>
+            This link is incomplete
+          </h1>
+          <p className="mt-4 text-lg text-[#10231D]/70">{t("auth.missingResetToken")}</p>
+          <Link
+            to="/forgot-password"
+            className="mt-9 inline-flex items-center gap-2 text-base font-semibold text-[#10231D] underline decoration-[#F4B63F] decoration-[3px] underline-offset-4 hover:decoration-[#10231D]"
+          >
+            Request a new link <ArrowRight className="h-5 w-5" />
+          </Link>
+        </div>
+      ) : (
+        <>
+          <h1 className="text-5xl font-extrabold leading-none tracking-[-0.03em]" style={DISPLAY}>
             {t("auth.resetPasswordTitle")}
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("auth.resetPasswordDescription")}
-          </p>
-        </div>
+          <p className="mt-4 text-lg text-[#10231D]/70">Pick a password you don't use anywhere else.</p>
 
-        <div className="bg-card rounded-xl shadow-sm border border-border p-8 space-y-5">
-          {!token ? (
-            <div className="space-y-4">
-              <div className="bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-sm px-4 py-3 rounded-lg">
-                {t("auth.missingResetToken")}
-              </div>
-              <Link
-                to="/forgot-password"
-                className="inline-flex items-center gap-1.5 text-sm text-brand-600 dark:text-brand-400 hover:text-brand-700 font-medium"
-              >
-                <ArrowLeft className="h-4 w-4" /> {t("auth.forgotPasswordTitle")}
-              </Link>
+          <form onSubmit={handleSubmit(onSubmit)} className="mt-9 space-y-6" noValidate>
+            <div>
+              <TextField
+                label={t("auth.newPassword")}
+                type="password"
+                autoComplete="new-password"
+                autoFocus
+                placeholder="New password"
+                error={errors.password?.message}
+                {...register("password")}
+              />
+              <PasswordStrength password={password} />
             </div>
-          ) : (
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-              {error && (
-                <div className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-sm px-4 py-3 rounded-lg">
-                  {error}
-                </div>
+
+            <TextField
+              label={t("auth.confirmPassword")}
+              type="password"
+              autoComplete="new-password"
+              placeholder="Type it again"
+              error={errors.confirmPassword?.message ?? (mismatch ? t("auth.passwordsDontMatch") : undefined)}
+              {...register("confirmPassword")}
+            />
+
+            {error && (
+              <div className="flex items-start gap-3 rounded-xl bg-[#F7D9D4] px-4 py-3.5 text-[15px] text-[#7A1F14]" role="alert">
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <SubmitButton busy={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span>{t("auth.resettingPassword")}</span>
+                </>
+              ) : (
+                <>
+                  <span>{t("auth.resetPassword")}</span>
+                  <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+                </>
               )}
+            </SubmitButton>
+          </form>
 
-              <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1">
-                  {t("auth.newPassword")}
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    {...register("password")}
-                    className="bg-card text-foreground w-full px-3 py-2 pr-10 border border-border rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none"
-                    placeholder={t("auth.newPassword")}
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-                {errors.password && (
-                  <p className="text-red-500 text-xs mt-1">
-                    {errors.password.message}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-1">
-                  {t("auth.confirmPassword")}
-                </label>
-                <input
-                  type={showPassword ? "text" : "password"}
-                  {...register("confirmPassword")}
-                  className="bg-card text-foreground w-full px-3 py-2 border border-border rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none"
-                  placeholder={t("auth.confirmPassword")}
-                />
-                {errors.confirmPassword && (
-                  <p className="text-red-500 text-xs mt-1">
-                    {errors.confirmPassword.message}
-                  </p>
-                )}
-                {password &&
-                  watch("confirmPassword") &&
-                  password !== watch("confirmPassword") && (
-                    <p className="text-red-500 text-xs mt-1">
-                      {t("auth.passwordsDontMatch")}
-                    </p>
-                  )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-brand-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 transition-colors"
-              >
-                {isSubmitting
-                  ? t("auth.resettingPassword")
-                  : t("auth.resetPassword")}
-              </button>
-
-              <Link
-                to="/login"
-                className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-4 w-4" /> {t("auth.backToLogin")}
-              </Link>
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
+          <Link
+            to="/login"
+            className="mt-9 inline-flex items-center gap-2 text-base font-semibold text-[#10231D] underline decoration-[#F4B63F] decoration-[3px] underline-offset-4 hover:decoration-[#10231D]"
+          >
+            <ArrowLeft className="h-5 w-5" /> {t("auth.backToLogin")}
+          </Link>
+        </>
+      )}
+    </AuthShell>
   );
 }

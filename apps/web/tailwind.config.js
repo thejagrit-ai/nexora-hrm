@@ -18,6 +18,17 @@ export default {
           900: "#1e3a8a",
           950: "#172554",
         },
+        // NEXORA HRM Custom Colors
+        nexora: {
+          navy: "#080D1C",
+          "dark-surface": "#111827",
+          indigo: "#635BFF",
+          violet: "#9333EA",
+          lavender: "#A5B4FC",
+          emerald: "#10B981",
+          "light-bg": "#F8FAFC",
+          white: "#FFFFFF",
+        },
         // Semantic theme tokens — resolve to CSS variables defined in
         // src/styles/globals.css (:root for light, .dark for dark). Using
         // <alpha-value> lets utilities like bg-card/80 apply opacity.
@@ -44,9 +55,24 @@ export default {
           "0%": { transform: "translateX(-100%)" },
           "100%": { transform: "translateX(0)" },
         },
+        "float-slow": {
+          "0%, 100%": { transform: "translateY(0px)" },
+          "50%": { transform: "translateY(-8px)" },
+        },
+        "float-medium": {
+          "0%, 100%": { transform: "translateY(0px)" },
+          "50%": { transform: "translateY(-14px)" },
+        },
+        "float-reverse": {
+          "0%, 100%": { transform: "translateY(0px)" },
+          "50%": { transform: "translateY(10px)" },
+        },
       },
       animation: {
         "slide-in-left": "slide-in-left 0.3s ease-out",
+        "float-slow": "float-slow 6s ease-in-out infinite",
+        "float-medium": "float-medium 5s ease-in-out infinite",
+        "float-reverse": "float-reverse 7s ease-in-out infinite",
       },
     },
   },

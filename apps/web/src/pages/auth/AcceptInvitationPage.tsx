@@ -11,6 +11,7 @@
 // message instead of the generic axios fallback.
 // =============================================================================
 
+import { NexoraMark } from "@/components/brand/NexoraLogo";
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import axios from "axios";
@@ -150,7 +151,7 @@ export default function AcceptInvitationPage() {
       </div>
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <img src="/empcloud-logo.png" alt={t("acceptInvitation.logoAlt")} className="h-12 mx-auto mb-4" />
+          <NexoraMark size={56} className="mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-foreground">{t("acceptInvitation.heading")}</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {t("acceptInvitation.subheading")}

@@ -291,6 +291,21 @@ export async function forgotPassword(email: string): Promise<{ token: string } |
     to: user.email,
     firstName: user.first_name || "",
     token,
+  }).then(() => {
+    // Local development usually has no SMTP/SendGrid, so the email is dropped
+    // and nobody could ever finish a reset. Print the link to the server
+    // console instead. Fails closed: only when NODE_ENV is exactly
+    // "development", no email transport exists, and DEV_LOG_RESET_LINKS=true
+    // is set explicitly. Reset tokens must never reach logs otherwise.
+    const hasTransport = Boolean(process.env.SENDGRID_API_KEY || process.env.SMTP_HOST);
+    if (
+      !hasTransport &&
+      process.env.NODE_ENV === "development" &&
+      process.env.DEV_LOG_RESET_LINKS === "true"
+    ) {
+      const base = (process.env.APP_URL || "http://localhost:5173").replace(/\/+$/, "");
+      logger.info(`[dev] Password reset link for ${user.email}: ${base}/reset-password?token=${encodeURIComponent(token)}`);
+    }
   });
 
   return { token };
