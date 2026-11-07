@@ -59,8 +59,8 @@ export default function RegisterPage() {
       const code = err.response?.status;
       const apiMsg = err.response?.data?.error?.message;
       setError(
-        !err.response
-          ? "Can't reach the server. Check that the API is running and try again."
+        !err.response || code === 502 || code === 503 || code === 504
+          ? "The server isn't responding right now. It may be starting up. Wait a minute and try again."
           : code === 429
             ? "Too many sign-up attempts from this network. Wait a while and try again."
             : apiMsg || t("registerPage.error.registrationFailed"),
